@@ -1,0 +1,44 @@
+﻿鈻?Next.js 16.4.2 (Turbopack)
+- Environments: .env
+鉁?Running next.config.ts took 28ms
+
+  Creating an optimized production build ...
+鉁?Compiled successfully in 12.6s
+  Running TypeScript ...
+
+  We detected TypeScript in your project and reconfigured your tsconfig.json file for you.
+  The following suggested values were added to your tsconfig.json. These values can be changed to fit your project's needs:
+
+  	- include was updated to add '.next/dev/types/**/*.ts'
+
+  The following mandatory changes were made to your tsconfig.json:
+
+  	- jsx was set to react-jsx (next.js uses the React automatic runtime)
+
+  Finished TypeScript in 1099ms ...
+  Collecting page data using 18 workers ...
+  Generating static pages using 18 workers (0/2) ...
+鉁?Generating static pages using 18 workers (2/2) in 383ms
+  Finalizing page optimization ...
+
+Route (app)
+鈹?茠 /
+鈹?茠 /_not-found
+鈹?茠 /api/v1/auth/github/callback
+鈹?茠 /api/v1/auth/github/start
+鈹?茠 /api/v1/auth/logout
+鈹?茠 /api/v1/me
+鈹?茠 /api/v1/papers
+鈹?茠 /api/v1/papers/[id]
+鈹?茠 /api/v1/papers/[id]/diff
+鈹?茠 /api/v1/papers/[id]/discussion
+鈹?茠 /api/v1/papers/[id]/discussion/comments
+鈹?茠 /api/v1/papers/[id]/report
+鈹?茠 /api/v1/papers/[id]/versions
+鈹?茠 /api/v1/papers/[id]/vote
+鈹?茠 /api/v1/sync
+鈹?茠 /api/webhooks/github
+
+
+茠  (Dynamic)  server-rendered on demand
+

@@ -1,0 +1,19 @@
+id: "01J9Z3K7Q2M8V4T6R1N0B5C8XK"
+title: "检索评测中的泄漏：语料污染如何夸大召回率"
+authors:
+  - name: "林小宇"
+    login: "linxiaoyu"
+    affiliation: "清华大学 · 计算机系"
+  - name: "陈梦"
+    login: "chenmeng"
+    affiliation: "上海人工智能实验室"
+categories: [cs.IR, cs.CL]
+keywords: [retrieval, evaluation, contamination, benchmark]
+license: CC-BY-4.0
+language: zh-CN
+status: published
+published_at: "2026-04-22T09:30:00Z"
+source_url: "https://arxiv.org/abs/2604.06612"
+commit: "b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c5e7b9d1"
+discussion_issue: 132
+pr: 160

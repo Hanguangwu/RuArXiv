@@ -1,0 +1,16 @@
+id: "01J9Z3K7Q2M8V4T6R1N0B5C8XQ"
+title: "隐私保护的遥测聚合：差分隐私在真实运维数据上的代价"
+authors:
+  - name: "Elena Volkova"
+    login: "elena-v"
+    affiliation: "TU Delft · Cybersecurity"
+categories: [cs.CR, cs.DC]
+keywords: [differential-privacy, telemetry, observability, aggregation]
+license: CC-BY-4.0
+language: zh-CN
+status: hidden
+published_at: "2026-08-08T04:00:00Z"
+source_url: "https://arxiv.org/abs/2608.07712"
+commit: "d7f9a1c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1d3f5"
+discussion_issue: 136
+pr: 162

@@ -1,0 +1,19 @@
+id: "01J9Z3K7Q2M8V4T6R1N0B5C8XE"
+title: "稀疏注意力的近似误差界与自适应选择"
+authors:
+  - name: "赵云"
+    login: "zhaoyun"
+    affiliation: "北京大学 · 数学科学学院"
+  - name: "Alex Park"
+    login: "alex-park"
+    affiliation: "KAIST · ML Systems Lab"
+categories: [cs.LG, math.OC]
+keywords: [sparse-attention, approximation, error-bounds, transformers]
+license: CC-BY-4.0
+language: zh-CN
+status: published
+published_at: "2026-05-09T05:30:00Z"
+source_url: "https://arxiv.org/abs/2605.01998"
+commit: "2c4e6b8d0f2a4c6e8b0d2f4a6c8e0b2d4f6a8c0e"
+discussion_issue: 122
+pr: 150

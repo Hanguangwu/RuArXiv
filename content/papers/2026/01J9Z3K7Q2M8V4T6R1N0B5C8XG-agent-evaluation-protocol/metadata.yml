@@ -1,0 +1,18 @@
+id: "01J9Z3K7Q2M8V4T6R1N0B5C8XG"
+title: "智能体评测协议：从单轮基准到长程任务"
+authors:
+  - name: "Kaito Sato"
+    login: "kaito-s"
+    affiliation: "University of Tokyo · HCI"
+  - name: "林小宇"
+    login: "linxiaoyu"
+    affiliation: "清华大学 · 计算机系"
+categories: [cs.AI, cs.HC]
+keywords: [agents, evaluation, long-horizon, protocol]
+license: CC-BY-4.0
+language: zh-CN
+status: review
+published_at: "2026-10-02T09:00:00Z"
+commit: "0e2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d"
+discussion_issue: 124
+pr: 156

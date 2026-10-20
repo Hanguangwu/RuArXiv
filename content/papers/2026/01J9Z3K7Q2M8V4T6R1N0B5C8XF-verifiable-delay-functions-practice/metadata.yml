@@ -1,0 +1,19 @@
+id: "01J9Z3K7Q2M8V4T6R1N0B5C8XF"
+title: "可验证延迟函数的工程实践：参数、硬件与攻击面"
+authors:
+  - name: "Elena Volkova"
+    login: "elena-v"
+    affiliation: "TU Delft · Cybersecurity"
+  - name: "王哲"
+    login: "wangzhe"
+    affiliation: "云基础设施 · 分布式系统"
+categories: [cs.CR, cs.DC]
+keywords: [verifiable-delay-function, randomness-beacon, timing-attack, hardware]
+license: CC-BY-4.0
+language: zh-CN
+status: published
+published_at: "2026-04-03T12:00:00Z"
+source_url: "https://arxiv.org/abs/2604.00876"
+commit: "6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c"
+discussion_issue: 123
+pr: 152

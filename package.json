@@ -1,0 +1,49 @@
+{
+  "name": "ruarxiv",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "db:push": "prisma db push",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:reset": "prisma db push --force-reset && tsx prisma/seed.ts",
+    "sync": "tsx scripts/sync.ts",
+    "validate": "tsx scripts/validate-content.ts",
+    "check": "tsc --noEmit && tsx scripts/validate-content.ts"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "postcss": "^8.5.31",
+    "prisma": "6.16.2",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@octokit/rest": "^22.0.1",
+    "@prisma/client": "6.16.2",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
+    "gray-matter": "^4.0.3",
+    "katex": "^0.19.0",
+    "lucide-react": "^1.59.0",
+    "next": "16.4.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "tailwind-merge": "^3.7.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  }
+}

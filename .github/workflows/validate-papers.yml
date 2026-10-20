@@ -1,0 +1,31 @@
+name: validate-papers
+
+on:
+  pull_request:
+    paths:
+      - "content/papers/**"
+      - "schemas/**"
+      - "scripts/validate-content.ts"
+      - "src/lib/content.ts"
+  push:
+    branches: ["main"]
+    paths:
+      - "content/papers/**"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate paper metadata and directory layout
+        run: pnpm validate
+      - name: Typecheck
+        run: pnpm typecheck

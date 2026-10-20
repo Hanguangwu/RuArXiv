@@ -1,0 +1,52 @@
+{
+  "issueNumber": 124,
+  "issueUrl": "https://github.com/ruarxiv/papers/issues/124",
+  "comments": [
+    {
+      "id": "1802346201",
+      "author": "alex-park",
+      "body": "表 1 的费用是按什么价格算的？不同模型的 token 单价差异很大，跨模型比较费用其实是在比较供应商定价。",
+      "createdAt": "2026-10-02T12:30:00Z",
+      "reactions": { "+1": 11, "eyes": 2 },
+      "replies": [
+        {
+          "id": "1802346215",
+          "author": "kaito-s",
+          "body": "按 2026 年 9 月的公开 API 价格，附录 D 有明细。我们也提供了只比较工具调用次数的版本，结论方向一致。",
+          "createdAt": "2026-10-02T13:10:00Z",
+          "reactions": { "+1": 6 }
+        }
+      ]
+    },
+    {
+      "id": "1802346228",
+      "author": "wangzhe",
+      "body": "环境未重置导致的污染能具体说说是哪个基准吗？我们内部跑 AgentBench 时也遇到过类似问题。",
+      "createdAt": "2026-10-03T02:05:00Z",
+      "reactions": { "+1": 7 }
+    },
+    {
+      "id": "1802346239",
+      "author": "sofia-k",
+      "body": "「最后 10% 步骤失败占 30%」这个统计有幸存者偏差：只有走到最后的轨迹才可能在那里失败。建议按步骤数做风险集分析。",
+      "createdAt": "2026-10-03T08:44:00Z",
+      "reactions": { "+1": 13, "heart": 3 },
+      "replies": [
+        {
+          "id": "1802346247",
+          "author": "linxiaoyu",
+          "body": "这个批评成立。我们会在修订版里改成按剩余步数的条件失败率，并补一张风险曲线。",
+          "createdAt": "2026-10-03T09:02:00Z",
+          "reactions": { "+1": 9 }
+        }
+      ]
+    },
+    {
+      "id": "1802346258",
+      "author": "chenmeng",
+      "body": "部分得分按子目标均分确实有问题，尤其是子目标之间存在依赖时。可以考虑按信息增益加权。",
+      "createdAt": "2026-10-04T03:26:00Z",
+      "reactions": { "+1": 5 }
+    }
+  ]
+}

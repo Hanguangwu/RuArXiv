@@ -1,0 +1,238 @@
+// RuArXiv data model.
+// GitHub is the system of record for paper text and discussion; this database
+// is the read-optimised mirror plus all website-owned state (roles, votes,
+// reports, audit trail).
+//
+// SQLite is used for local development. The schema is deliberately portable to
+// PostgreSQL: no SQLite-only features, JSON is stored as text, enums are
+// string columns validated in `src/lib/constants.ts`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  // Immutable GitHub identity. `login` can change, this cannot.
+  githubUserId String   @unique
+  login        String   @unique
+  name         String?
+  avatarUrl    String?
+  email        String?
+  bio          String?
+  affiliation  String?
+  // USER | INVITED_USER | AUTHOR | MODERATOR | ADMIN
+  role         String   @default("USER")
+  // ACTIVE | SUSPENDED
+  status       String   @default("ACTIVE")
+  isDemo       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  lastLoginAt  DateTime?
+
+  papers        Paper[]        @relation("PaperSubmitter")
+  comments      Comment[]
+  votes         Vote[]
+  reports       Report[]       @relation("Reporter")
+  resolved      Report[]       @relation("Resolver")
+  auditLogs     AuditLog[]
+  invitesSent   Invite[]       @relation("InviteCreator")
+  invitesUsed   Invite[]       @relation("InviteConsumer")
+
+  @@index([role])
+}
+
+model Invite {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  email       String?
+  note        String?
+  createdById String
+  usedById    String?
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  createdBy User  @relation("InviteCreator", fields: [createdById], references: [id])
+  usedBy    User? @relation("InviteConsumer", fields: [usedById], references: [id])
+
+  @@index([email])
+}
+
+model Paper {
+  id         String @id @default(cuid())
+  // Immutable URL slug, derived from the paper directory name.
+  slug       String @unique
+  // Stable directory inside the content repository:
+  // papers/2026/<paperId>-<slug>
+  repoId     String
+  path       String
+  title      String
+  abstract   String
+  // JSON arrays, parsed through `src/lib/serialize.ts`.
+  authorsJson    String
+  // Comma separated GitHub logins, used for author pages without JSON queries.
+  authorLogins   String @default("")
+  categoriesJson String
+  keywordsJson   String
+  license        String
+  language       String @default("zh-CN")
+  sourceUrl      String?
+  pdfUrl         String?
+  // PENDING_REVIEW | PUBLISHED | HIDDEN | REJECTED
+  status         String @default("PENDING_REVIEW")
+  currentCommitSha String?
+  currentVersionId String?
+  githubIssueNumber Int?
+  discussionUrl     String?
+  // Denormalised counters kept in sync by the ingest layer.
+  score        Int      @default(0)
+  upvotes      Int      @default(0)
+  downvotes    Int      @default(0)
+  commentCount Int      @default(0)
+  viewCount    Int      @default(0)
+  publishedAt  DateTime?
+  lastActivityAt DateTime @default(now())
+  submittedById  String?
+  syncedAt       DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  submittedBy User?          @relation("PaperSubmitter", fields: [submittedById], references: [id])
+  versions    PaperVersion[]
+  comments    Comment[]
+  votes       Vote[]
+  reports     Report[]
+
+  @@index([status, publishedAt])
+  @@index([score])
+  @@index([lastActivityAt])
+  @@index([repoId])
+}
+
+model PaperVersion {
+  id             String   @id @default(cuid())
+  paperId        String
+  commitSha      String
+  parentSha      String?
+  prNumber       Int?
+  message        String?
+  contentSha256  String
+  objectKey      String?
+  bodyMarkdown   String
+  authorGithubId String?
+  authorLogin    String?
+  createdAt      DateTime @default(now())
+  isCurrent      Boolean  @default(false)
+
+  paper Paper @relation(fields: [paperId], references: [id], onDelete: Cascade)
+
+  @@unique([paperId, commitSha])
+  @@index([paperId, createdAt])
+}
+
+model Comment {
+  id              String  @id @default(cuid())
+  paperId         String
+  // Null for comments created on the website before GitHub sync catches up.
+  githubCommentId String? @unique
+  parentId        String?
+  authorGithubId  String?
+  authorLogin     String
+  authorAvatarUrl String?
+  authorName      String?
+  bodySnapshot    String
+  // GitHub reaction summary: {"+1": 3, "heart": 1}
+  reactionsJson   String  @default("{}")
+  // VISIBLE | HIDDEN | DELETED
+  status          String  @default("VISIBLE")
+  isAuthor        Boolean @default(false)
+  localAuthorId   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now())
+  syncedAt        DateTime @default(now())
+
+  paper  Paper    @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  parent Comment? @relation("CommentReplies", fields: [parentId], references: [id])
+  replies Comment[] @relation("CommentReplies")
+  author User?    @relation(fields: [localAuthorId], references: [id])
+
+  @@index([paperId, createdAt])
+  @@index([parentId])
+}
+
+model Vote {
+  id        String   @id @default(cuid())
+  paperId   String
+  userId    String
+  // 1 = upvote, -1 = downvote
+  value     Int
+  // LOCAL | GITHUB
+  source    String   @default("LOCAL")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  paper Paper @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([paperId, userId])
+  @@index([paperId, value])
+}
+
+model Report {
+  id         String   @id @default(cuid())
+  paperId    String?
+  commentId  String?
+  reporterId String?
+  reason     String
+  detail     String?
+  // OPEN | RESOLVED | DISMISSED
+  status     String   @default("OPEN")
+  createdAt  DateTime @default(now())
+  resolvedAt DateTime?
+  resolvedById String?
+  resolution   String?
+
+  paper      Paper? @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  reporter   User?  @relation("Reporter", fields: [reporterId], references: [id])
+  resolvedBy User?  @relation("Resolver", fields: [resolvedById], references: [id])
+
+  @@index([status, createdAt])
+}
+
+model SyncEvent {
+  id          String   @id @default(cuid())
+  // GitHub delivery id, or a locally generated id for manual/seed syncs.
+  deliveryId  String   @unique
+  eventName   String
+  repoId      String?
+  payloadHash String
+  // PENDING | PROCESSED | FAILED | DUPLICATE
+  status      String   @default("PENDING")
+  retryCount  Int      @default(0)
+  error       String?
+  receivedAt  DateTime @default(now())
+  processedAt DateTime?
+
+  @@index([status, receivedAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actorLogin String?
+  action    String
+  targetType String
+  targetId   String?
+  detailJson String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([createdAt])
+  @@index([targetType, targetId])
+}
