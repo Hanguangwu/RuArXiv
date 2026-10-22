@@ -109,22 +109,22 @@ export async function listPapers(params: ListPapersParams = {}) {
 
   const conditions: Prisma.PaperWhereInput[] = [];
   if (status !== "ALL") conditions.push({ status });
-  if (params.category) conditions.push({ categoriesJson: { contains: `"${params.category}"` } });
-  if (params.author) conditions.push({ authorLogins: { contains: params.author.toLowerCase() } });
+  if (params.category) conditions.push({ categoriesJson: { contains: `"${params.category}"`, mode: "insensitive" } });
+  if (params.author) conditions.push({ authorLogins: { contains: params.author.toLowerCase(), mode: "insensitive" } });
   if (params.query) {
     const q = params.query.trim();
     if (q) {
       conditions.push({
         OR: [
-          { title: { contains: q } },
-          { abstract: { contains: q } },
-          { authorsJson: { contains: q } },
-          { keywordsJson: { contains: q } },
+          { title: { contains: q, mode: "insensitive" } },
+          { abstract: { contains: q, mode: "insensitive" } },
+          { authorsJson: { contains: q, mode: "insensitive" } },
+          { keywordsJson: { contains: q, mode: "insensitive" } },
           ...(params.includeBody
             ? [
                 {
                   versions: {
-                    some: { isCurrent: true, bodyMarkdown: { contains: q } },
+                    some: { isCurrent: true, bodyMarkdown: { contains: q, mode: "insensitive" } },
                   },
                 } satisfies Prisma.PaperWhereInput,
               ]
@@ -373,7 +373,7 @@ export async function getAuthorProfile(login: string) {
     prisma.paper.findMany({
       where: {
         status: PAPER_STATUS.PUBLISHED,
-        authorLogins: { contains: normalized },
+        authorLogins: { contains: normalized, mode: "insensitive" },
       },
       select: paperSelect,
       orderBy: [{ publishedAt: "desc" }],
@@ -459,12 +459,12 @@ export async function searchPapers(query: string, limit = 20): Promise<SearchHit
     where: {
       status: PAPER_STATUS.PUBLISHED,
       OR: [
-        { title: { contains: q } },
-        { abstract: { contains: q } },
-        { authorsJson: { contains: q } },
-        { keywordsJson: { contains: q } },
-        { categoriesJson: { contains: q } },
-        { versions: { some: { isCurrent: true, bodyMarkdown: { contains: q } } } },
+        { title: { contains: q, mode: "insensitive" } },
+        { abstract: { contains: q, mode: "insensitive" } },
+        { authorsJson: { contains: q, mode: "insensitive" } },
+        { keywordsJson: { contains: q, mode: "insensitive" } },
+        { categoriesJson: { contains: q, mode: "insensitive" } },
+        { versions: { some: { isCurrent: true, bodyMarkdown: { contains: q, mode: "insensitive" } } } },
       ],
     },
     select: {
@@ -521,7 +521,7 @@ export async function searchComments(query: string, limit = 10) {
   const comments = await prisma.comment.findMany({
     where: {
       status: "VISIBLE",
-      bodySnapshot: { contains: q },
+      bodySnapshot: { contains: q, mode: "insensitive" },
       paper: { status: PAPER_STATUS.PUBLISHED },
     },
     include: {

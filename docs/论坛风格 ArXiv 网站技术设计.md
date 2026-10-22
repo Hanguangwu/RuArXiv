@@ -1,4 +1,8 @@
-# 论坛风格 ArXiv 网站技术设计
+> **已废弃（2026-10-22）**：本文件是早期通用架构草案（Kubernetes / OpenSearch / Kafka / 自建 Worker），
+> 不再代表本项目的目标架构。现行方案见
+> [基于 GitHub 与 Vercel 的论坛风格 ArXiv 网站技术设计](基于%20GitHub%20与%20Vercel%20的论坛风格%20ArXiv%20网站技术设计.md)。
+
+# 论坛风格 ArXiv 网站技术设计（历史草案）
 
 版本：v0.1
 日期：2026-10-19

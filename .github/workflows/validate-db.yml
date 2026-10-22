@@ -1,0 +1,57 @@
+name: validate-db
+
+on:
+  pull_request:
+    paths:
+      - "prisma/**"
+      - "src/lib/db.ts"
+      - "src/lib/ingest.ts"
+      - "src/lib/queries.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/validate-db.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "prisma/**"
+      - "src/lib/db.ts"
+      - "src/lib/ingest.ts"
+      - "src/lib/queries.ts"
+
+jobs:
+  migrate-and-seed:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ruarxiv
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ruarxiv"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ruarxiv?schema=public
+      DATABASE_URL_UNPOOLED: postgresql://postgres:postgres@localhost:5432/ruarxiv?schema=public
+      AUTH_SECRET: ci-only-secret-change-me-0123456789
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Generate Prisma Client
+        run: pnpm db:generate
+      - name: Replay migrations on an empty database
+        run: pnpm db:deploy
+      - name: Seed demo data
+        run: pnpm db:seed

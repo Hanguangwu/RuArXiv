@@ -3,17 +3,19 @@
 // is the read-optimised mirror plus all website-owned state (roles, votes,
 // reports, audit trail).
 //
-// SQLite is used for local development. The schema is deliberately portable to
-// PostgreSQL: no SQLite-only features, JSON is stored as text, enums are
-// string columns validated in `src/lib/constants.ts`.
+// PostgreSQL (Neon in production and development branches). JSON is stored as
+// text and enums are string columns validated in `src/lib/constants.ts`, which
+// keeps the schema portable and avoids migration churn when adding statuses.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Direct (non-pooled) connection used by `prisma migrate` on Neon.
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 model User {
