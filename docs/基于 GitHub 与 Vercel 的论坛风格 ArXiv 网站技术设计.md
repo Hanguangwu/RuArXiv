@@ -151,7 +151,7 @@ GitHub 事件
 ### 5.2 文件系统
 
 - 运行时只读；`process.cwd()/content` 是部署产物的一部分，可以读，但不能写。
-- `content/papers` 只用于**构建期/脚本期**校验与种子导入，不能作为运行时内容仓库。
+- `content/papers` 只用于**构建期/脚本期**校验与示例导入，不能作为运行时内容仓库。
 - 用户上传的 PDF/图片写 Vercel Blob，不写本地。
 - 临时文件如必须使用，只能写 `/tmp`，且要假定下一次请求不存在。
 
@@ -223,7 +223,7 @@ prisma generate && prisma migrate deploy && next build
 
 - Preview Deployment 使用 Neon Preview Branch；每个 PR 一个独立数据库分支，合并/删除部署后按保留策略清理。
 - 并发部署可能同时执行迁移；Prisma migrate 有数据库锁，但仍建议生产发布串行化（例如只允许 main 分支触发 Production Deployment）。
-- 初始化种子只对 Development/Preview 执行；生产通过内容同步导入，不跑 `seed.ts`。
+- 种子脚本已移除；Development/Preview 通过内容同步或显式演示登录准备数据，生产只通过内容同步导入。
 
 ### 6.4 Postgres 建模调整
 
@@ -616,7 +616,7 @@ model Asset {
 ### 12.2 OAuth
 
 - `state` + PKCE；回调地址必须与 GitHub 配置完全一致。
-- Preview Deployment 的域名与生产不同：为 Preview 单独建 OAuth App，或在 Preview 禁用 GitHub 登录、只用演示账号。
+- Preview Deployment 的域名与生产不同：为 Preview 单独建 OAuth App，或在 Preview 禁用 GitHub 登录；如必须登录，可显式设置 `ALLOW_DEMO_LOGIN=true`，但不建议在共享 Preview 开启。
 - 新用户默认邀请制；第一个用户成为 ADMIN 的逻辑要加并发保护（唯一约束或数据库锁）。
 
 ### 12.3 Webhook
@@ -698,7 +698,7 @@ AuditLog        id, actorId, actorLogin, action, targetType,
 
 | 环境 | 数据库 | Redis | Blob | GitHub | 用途 |
 |---|---|---|---|---|---|
-| Development | Neon branch（dev） | Upstash dev | Blob dev store | 可选真实 App 或演示账号 | 本地 `next dev` / `vercel dev` |
+| Development | Neon branch（dev） | Upstash dev | Blob dev store | 可选真实 App 或显式开启的演示登录 | 本地 `next dev` / `vercel dev` |
 | Preview | Neon Preview Branch（每 PR 一个） | Upstash 共享或独立 | 独立前缀/store | Preview OAuth App | PR 预览、迁移验证 |
 | Production | Neon 主库 | Upstash 生产库 | 生产 store | 生产 GitHub App | 正式流量 |
 
@@ -879,18 +879,18 @@ next build
 ### 阶段 1：数据库切换（已完成）
 
 1. ✅ `prisma/schema.prisma`：`provider = "postgresql"`，加 `directUrl`。
-2. ✅ 初始迁移已生成并入库；`prisma/seed.ts` 使用 `DATABASE_URL` 指向 Neon Development 分支。
+2. ✅ 初始迁移已生成并入库；seed 脚本已移除，数据库通过迁移与内容同步初始化。
 3. ✅ `src/lib/db.ts`：全局单例；`src/lib/queries.ts` 的 `contains` 加 `mode: "insensitive"` 以保持 SQLite 的大小写不敏感行为。
 4. ✅ 删除 `prisma/dev.db` 与本地 Postgres 依赖；`.gitignore` 保留 `*.db`。
-5. ✅ CI 新增 `validate-db.yml`：在临时 Postgres 上回放迁移并执行种子。Preview/Production 的迁移仍由各自 Neon 分支负责。
+5. ✅ CI 新增 `validate-db.yml`：在临时 Postgres 上回放迁移（不执行种子）。Preview/Production 的迁移仍由各自 Neon 分支负责。
 
 ### 阶段 2：移除运行时文件写入
 
 1. `src/app/actions.ts` 的 `createPaperAction`：删除 `mkdir/writeFile`；改为 DB 事务 + `GitHubWriteJob`。
 2. `syncNowAction`：生产禁用本地扫描；改为触发 GitHub 同步 Workflow。
-3. `src/lib/ingest.ts` 的 `syncLocalRepository`：仅保留给 seed/CLI，加 `assertNotProduction()`。
+3. `src/lib/ingest.ts` 的 `syncLocalRepository`：仅保留给 CLI/本地同步，加 `assertNotProduction()`。
 4. `src/lib/content.ts` 的 `contentRoot/loadLocalPapers`：只在脚本/测试中使用；请求路径不得 import。
-5. 确保 Vercel 构建产物包含 `content/papers`（如 seed 需要），用 `outputFileTracingIncludes` 显式声明；否则改为构建期导入数据库。
+5. 确保 Vercel 构建产物包含 `content/papers`（如本地同步需要），用 `outputFileTracingIncludes` 显式声明；否则改为构建期导入数据库。
 
 ### 阶段 3：Webhook 与队列
 

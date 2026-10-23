@@ -1,14 +1,15 @@
 ﻿import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, GitBranch, ShieldCheck } from "lucide-react";
-import { githubConfigured } from "@/lib/auth";
+import { demoLoginEnabled, githubConfigured } from "@/lib/auth";
 import { loginDemoAction } from "@/app/actions";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "登录" };
 
 const ERRORS: Record<string, string> = {
-  github_not_configured: "尚未配置 GitHub OAuth。可以先用下方的演示账号体验完整功能。",
+  github_not_configured: "尚未配置 GitHub OAuth，请联系管理员。",
+  demo_disabled: "演示登录已关闭，请使用 GitHub 登录。",
   invite_required: "该 GitHub 账号不在邀请名单中。RuArXiv 采用邀请制，请联系管理员。",
   suspended: "该账号已被暂停，请联系管理员。",
   invalid_state: "登录状态校验失败，请重新发起登录。",
@@ -44,6 +45,7 @@ export default async function LoginPage({
 }) {
   const { next = "/", error } = await searchParams;
   const configured = githubConfigured();
+  const demoEnabled = demoLoginEnabled();
   const safeNext = next.startsWith("/") && !next.startsWith("//") ? next : "/";
 
   return (
@@ -125,46 +127,51 @@ export default async function LoginPage({
                 </button>
                 <p className="mt-2 text-[0.7rem] leading-relaxed text-[var(--color-ink-faint)]">
                   未检测到 <span className="mono">GITHUB_CLIENT_ID</span>。配置后此按钮会自动启用；
-                  现在可以使用演示账号。
+                  请联系管理员。
                 </p>
               </div>
             )}
 
-            <div className="flex items-center gap-3 text-[0.64rem] uppercase tracking-wider text-[var(--color-ink-faint)]">
-              <span className="h-px flex-1 bg-[var(--color-line)]" />
-              演示模式
-              <span className="h-px flex-1 bg-[var(--color-line)]" />
-            </div>
+            {demoEnabled && (
+              <>
+                <div className="flex items-center gap-3 text-[0.64rem] uppercase tracking-wider text-[var(--color-ink-faint)]">
+                  <span className="h-px flex-1 bg-[var(--color-line)]" />
+                  演示模式
+                  <span className="h-px flex-1 bg-[var(--color-line)]" />
+                </div>
 
-            <div className="space-y-2">
-              {PERSONAS.map((persona) => (
-                <form key={persona.kind} action={loginDemoAction}>
-                  <input type="hidden" name="kind" value={persona.kind} />
-                  <input type="hidden" name="next" value={safeNext} />
-                  <button
-                    type="submit"
-                    className="group flex w-full items-center justify-between gap-3 border border-[var(--color-line)] px-3 py-2.5 text-left transition-colors hover:border-[var(--color-line-strong)] hover:bg-[var(--color-paper)]"
-                  >
-                    <span>
-                      <span className="block text-[0.8rem] font-medium">
-                        {persona.title}
-                        <span className="ml-2 font-mono text-[0.65rem] font-normal text-[var(--color-ink-faint)]">
-                          @{persona.login}
+                <div className="space-y-2">
+                  {PERSONAS.map((persona) => (
+                    <form key={persona.kind} action={loginDemoAction}>
+                      <input type="hidden" name="kind" value={persona.kind} />
+                      <input type="hidden" name="next" value={safeNext} />
+                      <button
+                        type="submit"
+                        className="group flex w-full items-center justify-between gap-3 border border-[var(--color-line)] px-3 py-2.5 text-left transition-colors hover:border-[var(--color-line-strong)] hover:bg-[var(--color-paper)]"
+                      >
+                        <span>
+                          <span className="block text-[0.8rem] font-medium">
+                            {persona.title}
+                            <span className="ml-2 font-mono text-[0.65rem] font-normal text-[var(--color-ink-faint)]">
+                              @{persona.login}
+                            </span>
+                          </span>
+                          <span className="mt-0.5 block text-[0.68rem] leading-relaxed text-[var(--color-ink-faint)]">
+                            {persona.description}
+                          </span>
                         </span>
-                      </span>
-                      <span className="mt-0.5 block text-[0.68rem] leading-relaxed text-[var(--color-ink-faint)]">
-                        {persona.description}
-                      </span>
-                    </span>
-                    <ArrowRight className="h-3.5 w-3.5 shrink-0 text-[var(--color-ink-faint)] group-hover:text-[var(--color-accent)]" aria-hidden />
-                  </button>
-                </form>
-              ))}
-            </div>
+                        <ArrowRight className="h-3.5 w-3.5 shrink-0 text-[var(--color-ink-faint)] group-hover:text-[var(--color-accent)]" aria-hidden />
+                      </button>
+                    </form>
+                  ))}
+                </div>
 
-            <p className="text-[0.66rem] leading-relaxed text-[var(--color-ink-faint)]">
-              演示账号是本地账号，不经过 GitHub。它们仅用于展示权限差异与审核流程，不会写入真实仓库。
-            </p>
+                <p className="text-[0.66rem] leading-relaxed text-[var(--color-ink-faint)]">
+                  演示账号是本地账号，不经过 GitHub。它们仅用于展示权限差异与审核流程，不会写入真实仓库。
+                  生产环境请保持 <span className="mono">ALLOW_DEMO_LOGIN=false</span>。
+                </p>
+              </>
+            )}
           </div>
 
           <div className="border-t border-[var(--color-line)] px-5 py-3 text-[0.68rem] text-[var(--color-ink-faint)]">

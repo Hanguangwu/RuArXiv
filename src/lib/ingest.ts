@@ -290,7 +290,7 @@ export type LocalSyncReport = {
   failed: Array<{ path: string; error: string }>;
 };
 
-/** Mirror `content/papers` into the database. Used by seed, CLI and webhooks. */
+/** Mirror `content/papers` into the database. Used by CLI and local sync. */
 export async function syncLocalRepository(options: { actorLogin?: string } = {}): Promise<LocalSyncReport> {
   const records = loadLocalPapers();
   const report: LocalSyncReport = {

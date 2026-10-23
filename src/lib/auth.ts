@@ -238,6 +238,10 @@ export async function signInWithGitHub(profile: GitHubProfile): Promise<SignInOu
   return { ok: true, user };
 }
 
+export function demoLoginEnabled() {
+  return process.env.ALLOW_DEMO_LOGIN === "true";
+}
+
 const DEMO_USERS = {
   reader: {
     githubUserId: "demo-reader",
@@ -271,6 +275,9 @@ const DEMO_USERS = {
 export type DemoRole = keyof typeof DEMO_USERS;
 
 export async function signInAsDemo(kind: DemoRole) {
+  if (!demoLoginEnabled()) {
+    throw new Error("Demo login is disabled");
+  }
   const preset = DEMO_USERS[kind] ?? DEMO_USERS.reader;
   const user = await prisma.user.upsert({
     where: { githubUserId: preset.githubUserId },

@@ -89,19 +89,18 @@ RuArXiv 是一个论坛式论文站点：
 content/papers/<year>/<paperId>-<slug>/
   metadata.yml         机器可读元数据（zod 校验）
   paper.md             正文（Markdown + LaTeX）
-  discussion.json      Issue 评论快照（演示/种子）
+  discussion.json      Issue 评论快照（演示/示例）
   versions/*.md        历史版本快照
 prisma/schema.prisma   目标：Postgres 数据模型
-prisma/seed.ts         演示数据（仅 dev/preview）
 scripts/validate-content.ts
 schemas/paper-metadata.schema.json
-src/lib/content.ts     内容解析（脚本/种子；请求路径不要用于写）
+src/lib/content.ts     内容解析（脚本/示例；请求路径不要用于写）
 src/lib/ingest.ts      幂等入库
 src/lib/sync.ts        GitHub 拉取同步
 src/lib/queries.ts     读模型（列表/详情/搜索/排行）
 src/lib/participation.ts 投票/评论
 src/lib/github.ts      OAuth、App JWT、Issue/PR 写入
-src/lib/auth.ts        Session、邀请、角色、演示登录
+src/lib/auth.ts        Session、邀请、角色、演示登录（默认关闭）
 src/app/actions.ts     Server Actions（写操作）
 src/app/api/v1/**      公开读 API + 写 API
 src/app/api/webhooks/github/route.ts
@@ -124,8 +123,7 @@ pnpm check           # typecheck + validate
 pnpm db:generate     # 生成 Prisma Client
 pnpm db:migrate      # 开发分支迁移（prisma migrate dev）
 pnpm db:deploy       # 应用已提交迁移（Preview/Production）
-pnpm db:seed         # 仅 dev/preview
-pnpm db:reset        # 仅 Neon Development 分支，会清空数据
+pnpm db:reset        # 仅 Neon Development 分支，会清空数据（不导入种子）
 pnpm sync            # 本地内容入库（仅 dev）
 pnpm sync --github   # 从 GitHub 拉取
 ```
@@ -139,7 +137,7 @@ vercel dev                    # 可选，本地模拟 Vercel 环境
 pnpm test                     # 补充后
 ```
 
-> 不要在 Production 手动执行 `db:seed` / `db:reset`。生产数据由内容同步与用户行为产生。
+> 不要在 Production 手动执行 `db:reset`。生产数据由内容同步与用户行为产生。
 
 ## 7. 环境变量
 
@@ -149,6 +147,8 @@ pnpm test                     # 补充后
 DATABASE_URL=                 # Neon 池化连接
 DATABASE_URL_UNPOOLED=        # Neon 直连，迁移用
 AUTH_SECRET=                  # 32+ 字节，按环境独立
+ALLOW_DEMO_LOGIN=false        # 生产必须为 false；仅本地 UI 调试可设为 true
+ALLOW_OPEN_SIGNUP=false       # 生产必须为 false；临时开放注册后改回
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
 GITHUB_APP_ID=
@@ -191,7 +191,7 @@ CRON_SECRET=                  # 可选
 - 评论保存 `bodySnapshot` 与 GitHub 来源；删除用软删除，保留回复链与审计。
 - 投票以本地 `Vote` 为事实来源；不要假装 GitHub reactions 提供“踩”。
 - 内容解析的 schema 在 `src/lib/content.ts` 与 `schemas/paper-metadata.schema.json` 保持一致。
-- 新增内容字段必须同时更新：zod schema、JSON Schema、`docs/content-authoring.md`、种子数据（如适用）。
+- 新增内容字段必须同时更新：zod schema、JSON Schema、`docs/content-authoring.md`、示例内容（如适用）。
 
 ## 10. 异步任务规则
 
@@ -238,7 +238,7 @@ pnpm validate
 涉及数据库/同步/队列的改动，额外验证：
 
 - `pnpm exec prisma migrate diff` 或迁移在空库可重放；
-- 在 Neon Development 分支运行 `pnpm db:deploy` 与 `pnpm db:seed`，确认种子数据计数正确；
+- 在 Neon Development 分支运行 `pnpm db:deploy`，确认迁移在空库可重放；不要依赖已移除的 seed 脚本；
 - Webhook 重复投递 10 次不产生重复数据；
 - 队列消息重投不重复计数；
 - 合并 PR 后 60 秒内缓存失效；

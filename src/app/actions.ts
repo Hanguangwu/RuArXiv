@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import {
+  demoLoginEnabled,
   destroySession,
   getCurrentUser,
   recordAudit,
@@ -32,6 +33,7 @@ function revalidatePaper(paperId: string) {
 /* -------------------------------------------------------------------------- */
 
 export async function loginDemoAction(formData: FormData) {
+  if (!demoLoginEnabled()) redirect("/login?error=demo_disabled");
   const kind = (formData.get("kind")?.toString() as DemoRole) || "reader";
   const next = safeNext(formData.get("next")?.toString());
   await signInAsDemo(kind);

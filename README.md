@@ -4,7 +4,7 @@
 
 论文正文是内容仓库里的 Markdown，元数据是可校验的 YAML，讨论是 GitHub Issue / Issue Comment。
 网站不把 GitHub 当在线数据库，而是维护自己的只读索引与业务数据（用户、投票、举报、审核、审计）。
-仓库中的 `content/papers` 是内容仓库的本地镜像，因此没有任何 GitHub 凭据也能完整体验产品。
+仓库中的 `content/papers` 是内容仓库的本地镜像；没有 GitHub 凭据时，可通过 `ALLOW_DEMO_LOGIN=true` 使用本地演示登录体验界面。
 
 > **部署目标：完全运行在 Vercel 上。**
 > 关系库用 Neon Postgres、缓存/限流用 Upstash Redis（均通过 Vercel Marketplace 接入），
@@ -81,11 +81,16 @@ DATABASE_URL_UNPOOLED="postgresql://user:password@ep-xxx.region.aws.neon.tech/ne
 
 ```bash
 pnpm db:deploy   # 应用 prisma/migrations
-pnpm db:seed     # 仅 dev/preview：导入 11 篇演示论文 / 66 条讨论
 pnpm dev         # http://localhost:3000
 ```
 
-无需 GitHub 凭据即可运行：登录页提供三个本地演示账号。
+数据库默认是空的，不包含演示论文或演示用户。论文通过内容同步导入，用户通过 GitHub 登录或邀请产生。
+
+> 演示登录默认关闭。仅在本地 UI 调试时可设置 `ALLOW_DEMO_LOGIN=true`；登录页会按需创建三个演示账号。生产环境必须保持 `false`。
+>
+> `db:reset` 会删除当前数据库中的所有数据，只能在 Neon Development 分支使用。
+
+开启演示登录后，登录页提供三个本地账号：
 
 | 演示身份 | 账号 | 权限 |
 |---|---|---|
@@ -93,10 +98,7 @@ pnpm dev         # http://localhost:3000
 | 作者 | `linxiaoyu` | 提交论文、评论（AUTHOR） |
 | 管理员 | `admin` | 审核、下架、处理举报、触发同步（ADMIN） |
 
-种子数据包含 9 篇已发布论文、1 篇待审核、1 篇因版权投诉下架，用来演示完整的审核与溯源链路。
-
-> `db:reset` 会删除当前数据库中的所有数据，只能在 Neon Development 分支使用。
-> 生产与共享 Preview 环境禁止运行 `db:reset` / `db:seed`。
+> 演示账号只用于本地体验，不会写入真实仓库。生产与共享 Preview 禁止开启演示登录。
 
 ### 常用命令
 
@@ -112,8 +114,7 @@ pnpm dev         # http://localhost:3000
 | `pnpm db:generate` | 生成 Prisma Client |
 | `pnpm db:migrate` | 创建/应用开发分支迁移（`prisma migrate dev`） |
 | `pnpm db:deploy` | 应用已提交的迁移（Preview/Production） |
-| `pnpm db:seed` | 重新导入演示数据（幂等，仅 dev/preview） |
-| `pnpm db:reset` | 重建 Development 分支数据库并重新导入演示内容 |
+| `pnpm db:reset` | 重建 Development 分支数据库（不导入种子） |
 
 ### 部署相关命令
 
@@ -145,6 +146,7 @@ DATABASE_URL=postgresql://...-pooler.../neondb?sslmode=require&pgbouncer=true
 DATABASE_URL_UNPOOLED=postgresql://.../neondb?sslmode=require
 
 AUTH_SECRET=...
+ALLOW_DEMO_LOGIN=false
 ALLOW_OPEN_SIGNUP=false
 NEXT_PUBLIC_SITE_URL=https://your.site
 
@@ -221,10 +223,9 @@ export const maxDuration = 300;
 content/papers/<year>/<paperId>-<slug>/
   metadata.yml         # 机器可读元数据（zod 校验）
   paper.md             # 正文（Markdown + LaTeX）
-  discussion.json      # Issue 评论快照（演示模式的数据源）
+  discussion.json      # Issue 评论快照
   versions/*.md        # 历史版本快照
 prisma/schema.prisma   # 用户、论文、版本、评论、投票、举报、同步事件、审计
-prisma/seed.ts         # 演示用户 / 邀请码 / 内容同步 / 投票与举报
 scripts/validate-content.ts
 schemas/paper-metadata.schema.json
 src/lib/content.ts     # 内容仓库解析（本地与 GitHub 共用）
@@ -233,7 +234,7 @@ src/lib/sync.ts        # GitHub 拉取同步、Issue 增量同步
 src/lib/queries.ts     # 读模型：列表、详情、搜索、排行、后台
 src/lib/participation.ts # 投票与评论服务（Web 与 API 共用）
 src/lib/github.ts      # OAuth、GitHub App JWT、Issue/PR 写入
-src/lib/auth.ts        # Session、邀请制、角色、Demo 登录
+src/lib/auth.ts        # Session、邀请制、角色、Demo 登录（默认关闭）
 src/app/actions.ts     # 服务端写操作
 src/app/api/v1/**      # 公开读 API + 写 API
 src/app/api/webhooks/github/route.ts
@@ -332,29 +333,281 @@ GET  /api/cron/reconcile              # Vercel Cron
 
 ## 接入真实 GitHub
 
-1. **GitHub App**：创建 App，权限最小化：
-   - Repository contents: Read（需要代提交 PR 时 Write）
-   - Issues: Read & write
-   - Metadata: Read
-   - 订阅事件：`push`、`issues`、`issue_comment`、`installation`
-2. 生成私钥，填写 Vercel 环境变量：
+本项目把 GitHub 集成拆成两个应用。不要试图只用一个 OAuth App 完成所有事情：
+
+| 能力 | 应用 | 说明 |
+|---|---|---|
+| 登录 | **GitHub OAuth App** | 读取 GitHub 身份与已验证邮箱，不访问仓库 |
+| Issue 评论、创建 PR、内容同步 | **GitHub App** | 安装到内容仓库，用安装令牌读写 Issue、PR、Contents |
+| Webhook | **GitHub App** | 接收 `push`、`issues`、`issue_comment` |
+
+当前代码的开关：
+
+- `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET` 都存在时，登录页显示 GitHub 登录；
+- `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY` + `GITHUB_INSTALLATION_ID` 都存在时，才允许向 GitHub 镜像评论或创建 PR；
+- `GITHUB_CONTENT_REPO` 指定内容仓库，`GITHUB_CONTENT_BRANCH` 指定默认分支。
+
+> 通用概念、OAuth/App 差异和 Token 流程见：[GitHub OAuth App 与 GitHub App 完全指南](docs/blog/github-oauth-vs-github-apps.md)。
+
+### 1. 准备稳定域名
+
+下面统一用 `https://your-domain` 表示生产域名。实际填写时替换为：
+
+- Vercel 生产域名，例如 `https://ruarxiv.vercel.app`；
+- 或已经绑定到 Vercel 的自定义域名。
+
+不要使用 `https://ruarxiv-xxxx.vercel.app` 这类每次部署都会变化的 Preview 地址。回调地址、Webhook 和 `GITHUB_REDIRECT_URI` 必须使用同一个稳定域名。
+
+### 2. 创建 GitHub OAuth App（只负责登录）
+
+GitHub → Settings → Developer settings → OAuth Apps → New OAuth App。
+
+| 字段 | 填写 |
+|---|---|
+| Application name | `RuArXiv` |
+| Homepage URL | `https://your-domain` |
+| Application description | 可选 |
+| Authorization callback URL | `https://your-domain/api/v1/auth/github/callback` |
+
+注意：
+
+- OAuth App 只有 **一个** Authorization callback URL，不是多个 Redirect URI。
+- 必须与 `GITHUB_REDIRECT_URI` 完全一致：协议、域名、路径、大小写都不能差。
+- 末尾不要多加 `/`。
+- 代码只请求 `read:user user:email`，不会请求 `repo`，所以 GitHub 登录本身没有仓库权限。
+
+创建后记录 Client ID，并生成 Client Secret，填入 Vercel：
 
 ```dotenv
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+GITHUB_REDIRECT_URI=https://your-domain/api/v1/auth/github/callback
+```
+
+重新部署后，登录页应出现“使用 GitHub 登录”。
+
+### 3. 创建 GitHub App（评论、PR、Webhook）
+
+GitHub → Settings → Developer settings → GitHub Apps → New GitHub App。
+
+#### 基本信息
+
+| 字段 | 填写 |
+|---|---|
+| GitHub App name | `RuArXiv Content Bot` 或类似，必须全 GitHub 唯一 |
+| Homepage URL | `https://your-domain` |
+| Description | 可选 |
+
+#### Identifying and authorizing users
+
+| 字段 | 填写 |
+|---|---|
+| Callback URL | 留空；登录已经由 OAuth App 负责 |
+| Expire user authorization tokens | 按需 |
+| Request user authorization (OAuth) during installation | 不勾选 |
+
+Callback URL 不是 Webhook URL；如果登录由 OAuth App 负责，这里留空即可。
+
+只有当你打算“只用一个 GitHub App 同时做登录”时，才需要把 Callback URL 填成：
+
+```text
+https://your-domain/api/v1/auth/github/callback
+```
+
+#### Post installation
+
+| 字段 | 填写 |
+|---|---|
+| Setup URL | 留空 |
+| Redirect on update | 不勾选 |
+
+#### Webhook
+
+| 字段 | 填写 |
+|---|---|
+| Active | 勾选 |
+| Webhook URL | `https://your-domain/api/webhooks/github` |
+| Secret | 随机字符串，填入 `GITHUB_WEBHOOK_SECRET` |
+| SSL verification | Enable |
+
+生成 secret：
+
+```powershell
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+#### Repository permissions
+
+| 权限 | 级别 | 用途 |
+|---|---|---|
+| Contents | Read and write | 读取内容、创建分支和提交 |
+| Issues | Read and write | 读写 Issue 评论 |
+| Pull requests | Read and write | 创建论文 PR |
+| Metadata | Read-only | GitHub 强制要求 |
+
+如果现在只测试评论，Contents 也可以先给 Read；阶段 2 要创建 PR，建议直接给 Write。
+
+#### Subscribe to events
+
+勾选：
+
+```text
+Push
+Issues
+Issue comment
+Installation
+```
+
+`Pull request` 当前消费者没有处理，可以不勾。
+
+#### Where can this GitHub App be installed?
+
+个人仓库选 `Only on this account`；内容仓库属于组织时，选对应组织或 `Any account` 后安装到组织。
+
+### 4. 安装 GitHub App
+
+创建 App 只是注册，不会自动获得仓库权限。
+
+1. 记录 **App ID**（数字，不是 Client ID）。
+2. 点击 **Generate a private key**，下载 `.pem`。
+3. 点击 **Install App**，选择账号/组织。
+4. 只勾选内容仓库，例如 `Hanguangwu/RuArXiv`。
+5. 安装完成后，浏览器地址类似：
+   ```text
+   https://github.com/settings/installations/12345678
+   ```
+   最后的 `12345678` 就是 `GITHUB_INSTALLATION_ID`。
+
+`GITHUB_CONTENT_REPO` 必须与安装的仓库一致：
+
+```dotenv
+GITHUB_CONTENT_REPO=Hanguangwu/RuArXiv
+GITHUB_CONTENT_BRANCH=main
+```
+
+如果内容仓库是独立仓库，则改成对应的 `owner/repo`。
+
+### 5. 配置 Vercel 环境变量
+
+```dotenv
+# GitHub OAuth App：登录
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+GITHUB_REDIRECT_URI=https://your-domain/api/v1/auth/github/callback
+
+# GitHub App：评论、PR、Webhook
 GITHUB_APP_ID=...
 GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n"
 GITHUB_INSTALLATION_ID=...
 GITHUB_WEBHOOK_SECRET=...
-GITHUB_CONTENT_REPO=owner/papers
+GITHUB_CONTENT_REPO=Hanguangwu/RuArXiv
 GITHUB_CONTENT_BRANCH=main
-GITHUB_CLIENT_ID=...
-GITHUB_CLIENT_SECRET=...
-GITHUB_REDIRECT_URI=https://your.site/api/v1/auth/github/callback
+
+# 站点自身
+AUTH_SECRET=...
+ALLOW_OPEN_SIGNUP=false
 ```
 
-3. Webhook URL：`https://your.site/api/webhooks/github`，Content type `application/json`。
-4. OAuth 回调地址必须与 `GITHUB_REDIRECT_URI` 完全一致；登录使用 PKCE + `state`。
-5. 邀请制：新用户默认需要 `Invite`（邮箱或邀请码）；第一个登录用户自动成为 `ADMIN`。开放注册可设 `ALLOW_OPEN_SIGNUP=true`。
-6. Preview Deployment 使用独立 OAuth App 或在 Preview 禁用 GitHub 登录，避免回调地址冲突。
+说明：
+
+- OAuth App 的 `GITHUB_CLIENT_ID` 与 GitHub App 的 `GITHUB_APP_ID` 不是一回事。
+- `GITHUB_APP_PRIVATE_KEY` 可以粘贴多行 PEM；如果只能单行输入，把换行写成 `\n`，代码会还原。
+- 环境变量要勾选正确的环境（Production / Preview / Development）。
+- 修改环境变量后必须重新部署，旧部署不会自动读取新值。
+- `AUTH_SECRET` 必须是 32 字节以上的随机值，不要使用开发默认值。
+
+### 6. Webhook 设置
+
+- Content type 使用 `application/json`。
+- GitHub 会发送 `X-Hub-Signature-256`，服务端用 `GITHUB_WEBHOOK_SECRET` 验签。
+- `X-GitHub-Delivery` 用于幂等去重。
+- 当前消费者处理 `push`、`issues`、`issue_comment`；其他事件会记录后忽略。
+- 当前 MVP 在 Webhook 请求内同步执行；生产迁移后应改为验签、入队、尽快返回 202。
+
+### 7. 本地与 Preview
+
+OAuth App 只有一个回调地址，因此：
+
+- 本地开发建议**单独创建一个 OAuth App**：
+  ```text
+  Homepage URL:
+  http://localhost:3000
+
+  Authorization callback URL:
+  http://localhost:3000/api/v1/auth/github/callback
+  ```
+  本地 `.env` 使用这个 App 的 Client ID/Secret，并设置：
+  ```dotenv
+  GITHUB_REDIRECT_URI=http://localhost:3000/api/v1/auth/github/callback
+  ```
+- Preview 域名每次变化，最容易出现 `redirect_uri_mismatch`。最简单策略是 Preview 禁用 GitHub 登录；如果仍需要登录，只有在显式设置 `ALLOW_DEMO_LOGIN=true` 时才能使用演示登录（不建议用于共享 Preview），或者为 Preview 单独创建 OAuth App，或改用 GitHub App 的用户授权（最多 10 个 callback URL）。
+- `GITHUB_REDIRECT_URI` 要按环境分别设置，不要在生产、Preview、本地共用一个值。
+
+### 8. 首次登录、邀请与角色
+
+- 如果数据库为空，第一个 GitHub 登录用户自动成为 `ADMIN`。
+- 如果数据库已有其他用户（包括历史演示用户），新 GitHub 用户会被判定为“非第一个用户”，需要邀请或临时开放注册。
+- 临时开放注册：
+  ```dotenv
+  ALLOW_OPEN_SIGNUP=true
+  ```
+  用 GitHub 登录成功后，建议改回 `false`。
+- 把自己的账号提升为管理员，在 Neon SQL Editor 执行：
+  ```sql
+  UPDATE "User"
+  SET role = 'ADMIN'
+  WHERE login = '你的GitHub用户名';
+  ```
+- GitHub 登录只确认身份；发帖、审核、投票权限仍由站内角色决定。
+- 生产环境保持 `ALLOW_DEMO_LOGIN=false`，否则任何人都可以通过演示登录获得管理员身份。
+
+### 9. 验证 Issue 评论
+
+评论写入分两步：
+
+1. 先写本地 `Comment`；
+2. 如果 `GITHUB_CONTENT_REPO` 和 GitHub App 都已配置，再 best-effort 镜像到 GitHub Issue。
+
+需要确认：
+
+- GitHub App 已安装到 `GITHUB_CONTENT_REPO` 对应的仓库；
+- 论文有真实的 `githubIssueNumber`；
+- `GITHUB_APP_ID`、私钥、`GITHUB_INSTALLATION_ID` 都正确。
+
+注意：内容仓库里的 `discussion.json` 可能使用 `issueNumber: 118` 之类的编号，但你的 GitHub 仓库里未必存在这些 Issue。若 Issue 不存在，GitHub 镜像会 404，本地评论仍保留，并在 `SyncEvent` 记录 `comment.mirror_failed`。
+
+测试建议：
+
+1. 在内容仓库手动创建一个 Issue。
+2. 把对应论文的 `githubIssueNumber` 改成这个真实编号。
+3. 在站点发评论。
+4. 检查 GitHub Issue 是否出现评论；作者会显示为 App 机器人，例如 `RuArXiv Content Bot[bot]`，不是登录用户本人。
+
+如果没有配置 GitHub App，评论仍会写入本地数据库，只是不会镜像到 GitHub。
+
+### 10. 常见错误
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `redirect_uri_mismatch` | GitHub 回调地址与 `GITHUB_REDIRECT_URI` 不一致 | 检查协议、域名、路径、末尾 `/` |
+| 登录页没有 GitHub 按钮 | OAuth 变量未配置或未重新部署 | 检查 `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` |
+| 生产仍出现演示登录 | `ALLOW_DEMO_LOGIN=true` | 设为 `false` 并重新部署 |
+| `invite_required` | 数据库已有用户，新用户没有邀请 | 临时 `ALLOW_OPEN_SIGNUP=true` 或创建邀请 |
+| Webhook `401 invalid_signature` | `GITHUB_WEBHOOK_SECRET` 不一致 | 重新填写 GitHub App 和 Vercel 的 secret |
+| 评论 404 | App 未安装到仓库，或 Issue 编号不存在 | 检查安装范围与 `githubIssueNumber` |
+| 评论 403 `Resource not accessible by integration` | Issues 权限不足，或权限变更未批准 | 给 Issues Write，并在安装页批准更新 |
+| PR 403 | 缺少 Pull requests / Contents 写权限 | 补权限并重新批准安装 |
+| App API 404 | `GITHUB_CONTENT_REPO` 与安装仓库不一致 | 改成实际仓库 `owner/repo` |
+| 私钥解析失败 | PEM 换行丢失 | 多行粘贴，或使用 `\n` |
+
+### 11. 安全检查
+
+- OAuth Client Secret、GitHub App 私钥、Webhook secret 只放在服务端环境变量，不进入客户端 bundle，不写日志。
+- GitHub App 权限按最小化配置；修改权限后，安装方需要重新批准。
+- 登录 Session 不保存 GitHub access token；当前代码只保存站内用户身份。
+- 生产环境必须保持 `ALLOW_DEMO_LOGIN=false`；演示登录在 UI 和服务端都会拒绝。
+- 私钥或 Client Secret 泄露时立即轮换，并更新 Vercel 环境变量。
+- Webhook 必须验签并用 `deliveryId` 幂等，避免重复处理。
 
 ---
 
@@ -396,7 +649,7 @@ GITHUB_REDIRECT_URI=https://your.site/api/v1/auth/github/callback
 当前代码与 Vercel 目标架构的差距：
 
 - [x] Prisma `sqlite` → `postgresql`，初始迁移入库（阶段 1）
-- [x] CI 用临时 Postgres 回放迁移与种子（`validate-db.yml`）
+- [x] CI 用临时 Postgres 回放迁移（`validate-db.yml`）
 - [ ] 移除 `createPaperAction` 的本地文件写入
 - [ ] Webhook 改为验签 + `SyncEvent` + 入队 + 202
 - [ ] 新增 Vercel Queues 消费者；PR/评论镜像异步化

@@ -19,7 +19,7 @@ on:
       - "src/lib/queries.ts"
 
 jobs:
-  migrate-and-seed:
+  migrate:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -53,5 +53,3 @@ jobs:
         run: pnpm db:generate
       - name: Replay migrations on an empty database
         run: pnpm db:deploy
-      - name: Seed demo data
-        run: pnpm db:seed
