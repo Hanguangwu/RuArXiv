@@ -58,7 +58,7 @@ export default async function HomePage({
                   name="q"
                   placeholder="搜索标题、作者、摘要、正文或评论…"
                   aria-label="搜索论文"
-                  className="field h-11 pl-9"
+                  className="field search-field h-11"
                 />
               </label>
               <button type="submit" className="btn btn-primary px-4">

@@ -63,7 +63,7 @@ export async function SiteHeader() {
               name="q"
               placeholder="搜索标题、摘要、正文或评论"
               aria-label="搜索论文"
-              className="field h-9 w-full pl-8 text-[0.8rem]"
+              className="field search-field h-9 w-full text-[0.8rem]"
             />
           </label>
         </form>
@@ -118,7 +118,7 @@ export async function SiteHeader() {
               name="q"
               placeholder="搜索论文、正文或评论"
               aria-label="搜索论文"
-              className="field h-9 w-full pl-8 text-[0.8rem]"
+              className="field search-field h-9 w-full text-[0.8rem]"
             />
           </label>
         </form>

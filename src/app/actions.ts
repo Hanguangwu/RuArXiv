@@ -14,7 +14,7 @@ import {
   signInAsDemo,
   type DemoRole,
 } from "@/lib/auth";
-import { COMMENT_STATUS, PAPER_STATUS, hasRole } from "@/lib/constants";
+import { CATEGORIES, COMMENT_STATUS, PAPER_STATUS, hasRole } from "@/lib/constants";
 import { contentRoot, slugify } from "@/lib/content";
 import { contentRepoConfigured, createPaperPullRequest } from "@/lib/github";
 import { castVote, createComment } from "@/lib/participation";
@@ -203,6 +203,11 @@ export async function createPaperAction(formData: FormData) {
   }
   if (authors.length === 0) redirect(`/submit?error=${encodeURIComponent("请至少填写一位作者")}`);
   if (categories.length === 0) redirect(`/submit?error=${encodeURIComponent("请选择至少一个分类")}`);
+  const allowedCategories = new Set(CATEGORIES.map((category) => category.slug));
+  const unknownCategories = categories.filter((category) => !allowedCategories.has(category));
+  if (unknownCategories.length) {
+    redirect(`/submit?error=${encodeURIComponent(`未知分类：${unknownCategories.join("、")}`)}`);
+  }
   if (/<script|javascript:/i.test(body)) {
     redirect(`/submit?error=${encodeURIComponent("正文包含不允许的脚本内容")}`);
   }

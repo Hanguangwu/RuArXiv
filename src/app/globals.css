@@ -124,6 +124,7 @@ body {
   font-size: 0.9rem;
   line-height: 1.5;
 }
+.field.search-field { padding-left: 2.25rem; }
 .field::placeholder { color: #9aa19b; }
 .field:focus {
   outline: 2px solid color-mix(in srgb, var(--color-moss) 45%, transparent);

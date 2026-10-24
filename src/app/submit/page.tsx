@@ -7,8 +7,6 @@ import { createPaperAction } from "@/app/actions";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "提交论文" };
 
-const GROUPS = Array.from(new Set(CATEGORIES.map((category) => category.group)));
-
 export default async function SubmitPage({
   searchParams,
 }: {
@@ -16,6 +14,9 @@ export default async function SubmitPage({
 }) {
   const [{ error }, viewer] = await Promise.all([searchParams, getCurrentUser()]);
   const canSubmit = !!viewer && hasRole(viewer.role, "AUTHOR");
+  // Derive groups per render instead of module scope so adding categories in
+  // constants.ts is reflected without restarting the server process.
+  const groups = Array.from(new Set(CATEGORIES.map((category) => category.group)));
 
   return (
     <div className="container-page py-8">
@@ -110,7 +111,7 @@ export default async function SubmitPage({
                 分类 <span className="text-[var(--color-accent)]">*</span>
               </legend>
               <div className="space-y-3 border border-[var(--color-line)] bg-[var(--color-paper-raised)] p-3.5">
-                {GROUPS.map((group) => (
+                {groups.map((group) => (
                   <div key={group}>
                     <p className="mb-1.5 text-[0.66rem] uppercase tracking-wider text-[var(--color-ink-faint)]">
                       {group}

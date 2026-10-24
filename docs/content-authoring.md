@@ -46,7 +46,7 @@ pr: 141
 
 - `title` 4–240 字；`abstract` 可选（没有时从正文 `## 摘要` 提取）。
 - `authors` 至少 1 人；`login` 只用小写字母、数字、连字符。
-- `categories` 至少 1 个，取自 `src/lib/constants.ts` 中的分类（如 `cs.AI`、`cs.CL`、`cs.LG`、`cs.CV`、`cs.IR`、`cs.SE`、`cs.DC`、`cs.CR`、`stat.ML`、`math.OC`、`physics.comp-ph`、`q-bio.NC`）。
+- `categories` 至少 1 个，必须取自 `src/lib/constants.ts` 的 `CATEGORIES`（如 `cs.AI`、`cs.CL`、`cs.LG`、`cs.IR`、`social.law_governance`、`math.statistics`、`interdisciplinary.computational_social`）。
 - `status` 为 `review` 时论文进入后台审核队列，不出现在公开列表。
 - `commit` 用 40 位十六进制字符串，同一个目录内保持不变。
 - `discussion_issue` 是 GitHub Issue 编号。

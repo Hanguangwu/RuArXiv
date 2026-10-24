@@ -86,7 +86,7 @@ export default async function SearchPage({
               name="q"
               defaultValue={query}
               placeholder="例如：检索增强、KV 缓存、因果推断"
-              className="field h-11 pl-9"
+              className="field search-field h-11"
               aria-label="搜索关键词"
             />
           </label>

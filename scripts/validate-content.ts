@@ -5,6 +5,7 @@
  * unique ids, safe markdown, directory naming. Run by `.github/workflows/
  * validate-papers.yml` on every pull request and locally via `pnpm validate`.
  */
+import { CATEGORIES } from "../src/lib/constants";
 import { loadLocalPapers, scanPaperDirectories } from "../src/lib/content";
 
 function main() {
@@ -12,6 +13,7 @@ function main() {
   const errors: string[] = [];
   const ids = new Map<string, string>();
   const slugs = new Map<string, string>();
+  const allowedCategories = new Set(CATEGORIES.map((category) => category.slug));
   let papers = 0;
 
   for (const { dir, relativePath } of dirs) {
@@ -38,11 +40,11 @@ function main() {
       if (record.body.length > 400_000) {
         errors.push(`${relativePath}: 正文超过 400KB 限制`);
       }
-      const missing = record.metadata.categories.filter(
-        (category) => !/^[a-z-]+(\.[A-Za-z-]+)?$/.test(category),
+      const unknownCategories = record.metadata.categories.filter(
+        (category) => !allowedCategories.has(category),
       );
-      if (missing.length) {
-        errors.push(`${relativePath}: 分类格式不合法: ${missing.join(", ")}`);
+      if (unknownCategories.length) {
+        errors.push(`${relativePath}: 未知分类: ${unknownCategories.join(", ")}`);
       }
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
