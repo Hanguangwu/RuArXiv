@@ -6,7 +6,7 @@
 
 RuArXiv 是一个论坛式论文站点：
 
-- 论文正文 = 内容仓库里的 Markdown + YAML 元数据（当前镜像在 `content/papers`）；
+- 论文正文 = 内容仓库里的 Markdown + YAML 元数据（当前在 `papers/`）；
 - 讨论 = GitHub Issue / Issue Comment；
 - 站点自己维护用户、角色、投票、举报、审核、同步与审计；
 - 页面读取只读数据库/缓存，**不在请求时实时调用 GitHub**。
@@ -26,7 +26,7 @@ RuArXiv 是一个论坛式论文站点：
 | 能力 | 当前代码 | 目标 |
 |---|---|---|
 | 数据库 | Prisma + Neon Postgres（阶段 1 完成） | Neon Postgres，迁移文件入库 |
-| 文件写入 | 提交时写 `content/papers` | 只写 DB + Vercel Blob，GitHub PR 异步创建 |
+| 文件写入 | 提交时写 `papers/` | 只写 DB + Vercel Blob，GitHub PR 异步创建 |
 | Webhook | 同步执行全量扫描 | 验签 + `SyncEvent` + 入队 + 202 |
 | 后台任务 | 请求内同步 | Vercel Queues / Workflows / Cron |
 | 缓存 | 基本动态渲染 | `use cache` / ISR / Runtime Cache / CDN |
@@ -86,7 +86,7 @@ RuArXiv 是一个论坛式论文站点：
 ## 5. 目录地图
 
 ```text
-content/papers/<year>/<paperId>-<slug>/
+papers/<year>/<paperId>-<slug>/
   metadata.yml         机器可读元数据（zod 校验）
   paper.md             正文（Markdown + LaTeX）
   discussion.json      Issue 评论快照（演示/示例）
@@ -118,7 +118,7 @@ pnpm dev
 pnpm build           # 含 prisma generate + prisma migrate deploy
 pnpm start
 pnpm typecheck
-pnpm validate        # 校验 content/papers
+pnpm validate        # 校验 papers/
 pnpm check           # typecheck + validate
 pnpm db:generate     # 生成 Prisma Client
 pnpm db:migrate      # 开发分支迁移（prisma migrate dev）
@@ -157,6 +157,7 @@ GITHUB_INSTALLATION_ID=
 GITHUB_WEBHOOK_SECRET=
 GITHUB_CONTENT_REPO=
 GITHUB_CONTENT_BRANCH=main
+GITHUB_SUBMISSIONS_BRANCH=submissions   # 网站统一推送的投稿分支；main 保持保护
 GITHUB_REDIRECT_URI=
 UPSTASH_REDIS_REST_URL=
 UPSTASH_REDIS_REST_TOKEN=

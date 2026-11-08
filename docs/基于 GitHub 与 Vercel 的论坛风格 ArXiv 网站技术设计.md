@@ -28,7 +28,7 @@ GitHub 仍然是论文正文、版本历史和 Issue 讨论的**内容源与审�
 
 1. **不要在 Vercel 上运行 SQLite、独立 Worker、Kafka、OpenSearch、自建 Redis。** 这些都需要持久磁盘或常驻进程，与 Vercel Functions 的模型冲突。
 2. **所有状态必须外置**到 Postgres、Redis、Blob 或 GitHub；函数实例随时可能被回收。
-3. **请求路径禁止写文件系统**。Vercel 的文件系统只读（`/tmp` 除外且不持久），论文提交不能再 `mkdir/writeFile` 到 `content/papers`。
+3. **请求路径禁止写文件系统**。Vercel 的文件系统只读（`/tmp` 除外且不持久），论文提交不能再 `mkdir/writeFile` 到 `papers/`。
 4. **Webhook 只做验签、幂等入库、入队，然后 202 返回。** 全量仓库扫描必须交给队列消费者或 Workflow。
 5. **大文件不走函数体。** Vercel Functions 请求/响应体上限 4.5 MB，PDF 必须由浏览器直传 Vercel Blob。
 6. **中文搜索不要指望 Postgres FTS。** 用 `pg_trgm` 做子串/模糊检索；规模上来后再接 Upstash Search 等 Marketplace 搜索服务。
@@ -79,7 +79,7 @@ GitHub 仍然是论文正文、版本历史和 Issue 讨论的**内容源与审�
 | 自建 Redis / Kafka / RabbitMQ | 需要常驻进程与持久连接，Vercel 不提供长期运行的 Worker。 |
 | OpenSearch / Elasticsearch | 同上；且运维成本与当前规模不匹配。 |
 | 在函数里 `setInterval` / `setTimeout` 做后台任务 | 请求结束实例即冻结/回收，定时器不保证执行。 |
-| 运行时写 `content/papers` | 部署产物只读；写入会丢失，且不会进入 GitHub。 |
+| 运行时写 `papers/` | 部署产物只读；写入会丢失，且不会进入 GitHub。 |
 | 在 Webhook 中同步全量扫描 GitHub | 超过函数时长、易触发 GitHub 限流、GitHub 10 秒超时会导致重投。 |
 
 ---
@@ -151,7 +151,7 @@ GitHub 事件
 ### 5.2 文件系统
 
 - 运行时只读；`process.cwd()/content` 是部署产物的一部分，可以读，但不能写。
-- `content/papers` 只用于**构建期/脚本期**校验与示例导入，不能作为运行时内容仓库。
+- `papers/` 只用于**构建期/脚本期**校验与示例导入，不能作为运行时内容仓库。
 - 用户上传的 PDF/图片写 Vercel Blob，不写本地。
 - 临时文件如必须使用，只能写 `/tmp`，且要假定下一次请求不存在。
 
@@ -513,7 +513,7 @@ export async function backfillRepository(repo: string) {
 
 ### 10.2 论文提交（无本地文件写入）
 
-当前实现会 `mkdir/writeFile` 到 `content/papers`，在 Vercel 上必须删除。新流程：
+当前实现会 `mkdir/writeFile` 到 `papers/`，在 Vercel 上必须删除。新流程：
 
 1. Server Action 校验标题、正文、作者、分类、脚本注入、长度。
 2. 在 Postgres 事务中创建：
@@ -524,14 +524,16 @@ export async function backfillRepository(repo: string) {
 3. 立即返回论文详情页，状态显示“PR 创建中”。
 4. `github-write` 消费者：
    - 读取 `PaperVersion.bodyMarkdown` 生成 `metadata.yml` 与 `paper.md`；
-   - 调用 GitHub API 创建 blob/tree/commit/branch/PR；
+   - 把文件提交到**统一投稿分支** `GITHUB_SUBMISSIONS_BRANCH`（默认 `submissions`），不再为每篇论文新建分支；
+   - 找到或创建一个 `submissions → main` 的 PR，并调用 GraphQL `enablePullRequestAutoMerge` 开启自动合并；PR 不可自动合并时退化为立即合并或保留待人工合并；
    - 保存 `prNumber`、`prUrl`，标记 job 完成；
    - 失败则按退避重试，超过阈值转人工。
 5. GitHub Actions 执行 `pnpm validate`（Schema、目录、大小、脚本注入）。
-6. 合并后 `push` Webhook 触发同步，写入新 `PaperVersion`，论文仍保持 `PENDING_REVIEW`，直到管理员在站内批准。
+6. 自动合并进入受保护的 `main` 后，`push` Webhook 触发同步，写入新 `PaperVersion`，论文仍保持 `PENDING_REVIEW`，直到管理员在站内批准。
 7. 批准时更新 `status = PUBLISHED`、`publishedAt`，写审计，`revalidateTag("paper:"+id)`。
 
 > 关键：**数据库先有草稿，PR 后补**。这样即使 GitHub 不可用，用户提交也不会丢；PR 只是审计与内容仓库的异步副本。
+> `main` 受分支保护，站点只向 `submissions` 推送；共享分支在完全合并后会快进到 `main`，因此分支数恒为 1。
 
 ### 10.3 讨论（Issue 映射）
 
@@ -874,7 +876,7 @@ next build
 - 创建 Neon 项目与 Development/Preview/Production 分支。
 - 创建 Upstash Redis、Vercel Blob store。
 - 在 Vercel 项目绑定 Git 仓库，配置环境变量。
-- 冻结 `content/papers` 的运行时写入需求，确认提交走 DB + PR。
+- 冻结 `papers/` 的运行时写入需求，确认提交走 DB + PR。
 
 ### 阶段 1：数据库切换（已完成）
 
@@ -890,7 +892,7 @@ next build
 2. `syncNowAction`：生产禁用本地扫描；改为触发 GitHub 同步 Workflow。
 3. `src/lib/ingest.ts` 的 `syncLocalRepository`：仅保留给 CLI/本地同步，加 `assertNotProduction()`。
 4. `src/lib/content.ts` 的 `contentRoot/loadLocalPapers`：只在脚本/测试中使用；请求路径不得 import。
-5. 确保 Vercel 构建产物包含 `content/papers`（如本地同步需要），用 `outputFileTracingIncludes` 显式声明；否则改为构建期导入数据库。
+5. 确保 Vercel 构建产物包含 `papers/`（如本地同步需要），用 `outputFileTracingIncludes` 显式声明；否则改为构建期导入数据库。
 
 ### 阶段 3：Webhook 与队列
 

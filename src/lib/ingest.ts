@@ -6,7 +6,7 @@ import {
   type DiscussionCommentInput,
   type PaperRecord,
 } from "./content";
-import { PAPER_STATUS, type PaperStatus } from "./constants";
+import type { PaperStatus } from "./constants";
 import { authorLogins, parseAuthors, type PaperAuthor } from "./serialize";
 
 export type IngestResult = "created" | "updated" | "unchanged";
@@ -18,16 +18,11 @@ function payloadHash(record: PaperRecord): string {
 }
 
 function statusForUpdate(record: PaperRecord, existing?: string | null): PaperStatus {
-  // Moderation decisions are website-owned: a re-sync must not silently
-  // republish a paper that a moderator hid or rejected.
-  if (existing === PAPER_STATUS.HIDDEN || existing === PAPER_STATUS.REJECTED) {
-    return existing;
-  }
-  if (existing === PAPER_STATUS.PENDING_REVIEW && record.status === PAPER_STATUS.PUBLISHED) {
-    // Content merged into the repo while the local review is still open:
-    // keep it pending until an admin approves it in the site.
-    return PAPER_STATUS.PENDING_REVIEW;
-  }
+  // Moderation is website-owned. The content repository's `status` is only a
+  // hint for first ingestion; afterwards a re-sync must never republish,
+  // unpublish or hide a paper on its own. (Repositories keep `status: review`
+  // for website submissions, which used to demote every approved paper.)
+  if (existing) return existing as PaperStatus;
   return record.status;
 }
 
@@ -185,6 +180,10 @@ export async function ingestPaper(
       existing.currentCommitSha !== record.sha ||
       existing.title !== data.title ||
       existing.abstract !== data.abstract ||
+      existing.authorsJson !== data.authorsJson ||
+      existing.authorLogins !== data.authorLogins ||
+      existing.categoriesJson !== data.categoriesJson ||
+      existing.keywordsJson !== data.keywordsJson ||
       existing.status !== data.status;
     if (changed) {
       await prisma.paper.update({ where: { id: record.paperId }, data });
@@ -290,7 +289,7 @@ export type LocalSyncReport = {
   failed: Array<{ path: string; error: string }>;
 };
 
-/** Mirror `content/papers` into the database. Used by CLI and local sync. */
+/** Mirror `papers/` into the database. Used by CLI and local sync. */
 export async function syncLocalRepository(options: { actorLogin?: string } = {}): Promise<LocalSyncReport> {
   const records = loadLocalPapers();
   const report: LocalSyncReport = {

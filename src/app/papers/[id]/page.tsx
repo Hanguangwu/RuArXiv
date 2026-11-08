@@ -28,7 +28,13 @@ import { reportAction } from "@/app/actions";
 export const dynamic = "force-dynamic";
 
 type Params = { id: string };
-type SearchParams = { error?: string; reported?: string; submitted?: string; commentSort?: string };
+type SearchParams = {
+  error?: string;
+  reported?: string;
+  submitted?: string;
+  updated?: string;
+  commentSort?: string;
+};
 
 export async function generateMetadata({
   params,
@@ -98,12 +104,14 @@ export default async function PaperPage({
         <span className="max-w-[18rem] truncate sm:max-w-md">{paper.title}</span>
       </nav>
 
-      {(query.error || query.reported || query.submitted) && (
+      {(query.error || query.reported || query.submitted || query.updated) && (
         <div className={`mb-5 ${query.error ? "banner banner-error" : "banner banner-ok"}`}>
           {query.error ??
             (query.submitted
               ? "提交成功。论文已进入审核队列，管理员批准后会出现在公开列表中。"
-              : "举报已记录，管理员会尽快处理。")}
+              : query.updated
+                ? "修改已保存。新版本已写入版本历史，GitHub PR 会在后台创建。"
+                : "举报已记录，管理员会尽快处理。")}
         </div>
       )}
 
@@ -121,6 +129,14 @@ export default async function PaperPage({
             </span>
           )}
           <span className="text-[var(--color-ink-faint)]">{paper.language}</span>
+          {(isOwner || isModerator) && (
+            <Link
+              href={`/papers/${paper.id}/edit`}
+              className="ml-auto inline-flex items-center gap-1 text-[0.72rem] text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
+            >
+              修改论文
+            </Link>
+          )}
         </div>
 
         <h1 className="mt-4 max-w-4xl font-serif text-[1.85rem] font-semibold leading-[1.22] tracking-tight sm:text-[2.5rem]">

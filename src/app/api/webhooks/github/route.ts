@@ -54,7 +54,36 @@ export async function POST(request: Request) {
   });
 
   try {
-    if (eventName === "push" || eventName === "issues") {
+    if (eventName === "push") {
+      // The submissions branch is an inbox, not content: only a push to the
+      // content branch (default `main`) changes what the site should index.
+      const ref = typeof payload.ref === "string" ? payload.ref : "";
+      const contentRef = `refs/heads/${process.env.GITHUB_CONTENT_BRANCH || "main"}`;
+      if (ref && ref !== contentRef) {
+        await prisma.syncEvent.update({
+          where: { id: event.id },
+          data: {
+            status: "PROCESSED",
+            processedAt: new Date(),
+            error: `ignored push to ${ref}`,
+          },
+        });
+        return NextResponse.json({ ok: true, ignored: true, reason: "non_content_branch" });
+      }
+
+      const report = await syncFromGitHub({ actorLogin: "github-webhook" });
+      await prisma.syncEvent.update({
+        where: { id: event.id },
+        data: {
+          status: report.failed.length ? "FAILED" : "PROCESSED",
+          processedAt: new Date(),
+          error: report.failed.length ? JSON.stringify(report.failed).slice(0, 2000) : null,
+        },
+      });
+      return NextResponse.json({ ok: true, report });
+    }
+
+    if (eventName === "issues") {
       const report = await syncFromGitHub({ actorLogin: "github-webhook" });
       await prisma.syncEvent.update({
         where: { id: event.id },

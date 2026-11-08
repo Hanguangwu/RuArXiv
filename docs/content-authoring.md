@@ -1,10 +1,10 @@
 # 内容仓库编写规范（演示语料）
 
-RuArXiv 的论文正文存放在内容仓库中，本地目录 `content/papers` 是 GitHub 仓库
-`papers/` 目录的镜像。每个论文一个不可变目录：
+RuArXiv 的论文正文存放在内容仓库中，本地 `papers/` 目录就是 GitHub 仓库
+`papers/` 目录（网站提交的 PR 也写入同一路径）。每个论文一个不可变目录：
 
 ```text
-content/papers/<year>/<paperId>-<slug>/
+papers/<year>/<paperId>-<slug>/
 ├── paper.md          正文（frontmatter 可省略）
 ├── metadata.yml      机器可读元数据（推荐，和 paper.md 二选一）
 ├── discussion.json   GitHub Issue + 评论导出（可选）

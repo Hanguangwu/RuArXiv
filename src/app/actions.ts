@@ -14,9 +14,12 @@ import {
   signInAsDemo,
   type DemoRole,
 } from "@/lib/auth";
-import { CATEGORIES, COMMENT_STATUS, PAPER_STATUS, hasRole } from "@/lib/constants";
+import { CATEGORIES, COMMENT_STATUS, LICENSE_LABELS, PAPER_STATUS, hasRole } from "@/lib/constants";
+import { deriveAbstract } from "@/lib/abstract";
+import { parseAuthorText, type AuthorDraft } from "@/lib/authors";
 import { contentRoot, slugify } from "@/lib/content";
-import { contentRepoConfigured, createPaperPullRequest } from "@/lib/github";
+import { authorLogins } from "@/lib/serialize";
+import { contentRepoConfigured, submitPaperFiles } from "@/lib/github";
 import { castVote, createComment } from "@/lib/participation";
 
 const maxCommentLength = 5000;
@@ -155,19 +158,174 @@ function newPaperId(): string {
   return `${stamp}${random}`;
 }
 
-function parseAuthors(input: string) {
-  return input
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [name, login, affiliation] = line.split("|").map((part) => part.trim());
-      return {
-        name: name || login || "匿名作者",
-        ...(login ? { login: login.replace(/^@/, "").toLowerCase() } : {}),
-        ...(affiliation ? { affiliation } : {}),
-      };
-    });
+function parseKeywords(raw: string): string[] {
+  return raw
+    .split(/[,，]/)
+    .map((keyword) => keyword.trim())
+    .filter(Boolean);
+}
+
+type PaperFormValues = {
+  title: string;
+  body: string;
+  /** What the author typed; empty means "derive from the body". */
+  explicitAbstract: string;
+  /** Final abstract stored in the database. */
+  abstract: string;
+  authors: AuthorDraft[];
+  categories: string[];
+  keywords: string[];
+  license: string;
+  language: string;
+  sourceUrl?: string;
+};
+
+type PaperFormResult =
+  | { ok: true; values: PaperFormValues }
+  | { ok: false; error: string };
+
+/**
+ * Validate the submit/edit form. Both actions use it so a revision can never
+ * drift from what a fresh submission accepts.
+ */
+function parsePaperForm(formData: FormData): PaperFormResult {
+  const title = formData.get("title")?.toString().trim() ?? "";
+  const explicitAbstract = formData.get("abstract")?.toString().trim() ?? "";
+  const body = formData.get("body")?.toString() ?? "";
+  const categories = formData
+    .getAll("categories")
+    .map((value) => value.toString())
+    .filter(Boolean);
+  const keywords = parseKeywords(formData.get("keywords")?.toString() ?? "");
+  const license = formData.get("license")?.toString() || "CC-BY-4.0";
+  const language = formData.get("language")?.toString() || "zh-CN";
+  const sourceUrl = formData.get("sourceUrl")?.toString().trim() || undefined;
+
+  if (title.length < 4 || title.length > 240) {
+    return { ok: false, error: "标题需要 4–240 个字" };
+  }
+  if (body.trim().length < 200) {
+    return { ok: false, error: "正文至少 200 字，请包含摘要、方法与实验" };
+  }
+  if (body.length > 400_000) {
+    return { ok: false, error: "正文超过 400KB 上限" };
+  }
+  if (explicitAbstract.length > 6000) {
+    return { ok: false, error: "摘要超过 6000 字上限" };
+  }
+  if (/<script|javascript:/i.test(body)) {
+    return { ok: false, error: "正文包含不允许的脚本内容" };
+  }
+
+  const parsedAuthors = parseAuthorText(formData.get("authors")?.toString() ?? "");
+  if (!parsedAuthors.ok) return parsedAuthors;
+
+  if (categories.length === 0) {
+    return { ok: false, error: "请选择至少一个分类" };
+  }
+  const allowedCategories = new Set(CATEGORIES.map((category) => category.slug));
+  const unknownCategories = categories.filter((category) => !allowedCategories.has(category));
+  if (unknownCategories.length) {
+    return { ok: false, error: `未知分类：${unknownCategories.join("、")}` };
+  }
+
+  if (keywords.length > 20) {
+    return { ok: false, error: "关键词最多 20 个" };
+  }
+  const longKeyword = keywords.find((keyword) => keyword.length > 60);
+  if (longKeyword) {
+    return { ok: false, error: `关键词「${longKeyword.slice(0, 20)}」超过 60 字` };
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(LICENSE_LABELS, license)) {
+    return { ok: false, error: "不支持的许可协议" };
+  }
+  if (language.length > 16) {
+    return { ok: false, error: "语言标识不合法" };
+  }
+  if (sourceUrl) {
+    try {
+      const url = new URL(sourceUrl);
+      if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("bad protocol");
+    } catch {
+      return { ok: false, error: "原始来源必须是 http(s) 链接" };
+    }
+  }
+
+  return {
+    ok: true,
+    values: {
+      title,
+      body,
+      explicitAbstract,
+      abstract: deriveAbstract(explicitAbstract, body),
+      authors: parsedAuthors.authors,
+      categories,
+      keywords,
+      license,
+      language,
+      sourceUrl,
+    },
+  };
+}
+
+/**
+ * Stable revision id for a paper. It covers the metadata and the body so a
+ * title-only revision still produces a new version, and it is written into
+ * `metadata.yml` as `commit` so the sync worker reproduces the same value.
+ */
+function contentRevisionSha(values: PaperFormValues): string {
+  const fingerprint = {
+    title: values.title,
+    abstract: values.explicitAbstract,
+    authors: values.authors,
+    categories: values.categories,
+    keywords: values.keywords,
+    license: values.license,
+    language: values.language,
+    sourceUrl: values.sourceUrl ?? null,
+  };
+  return createHash("sha256")
+    .update(`${JSON.stringify(fingerprint)}\n${values.body}`)
+    .digest("hex");
+}
+
+function buildMetadataYaml(input: {
+  paperId: string;
+  values: PaperFormValues;
+  status: "review" | "published" | "hidden";
+  publishedAt: string;
+  commit: string;
+}): string {
+  const { paperId, values } = input;
+  const lines = [
+    `id: ${JSON.stringify(paperId)}`,
+    `title: ${JSON.stringify(values.title)}`,
+  ];
+  if (values.explicitAbstract) {
+    lines.push(`abstract: ${JSON.stringify(values.explicitAbstract)}`);
+  }
+  lines.push(
+    "authors:",
+    ...values.authors.map((author) =>
+      [
+        `  - name: ${JSON.stringify(author.name)}`,
+        author.login ? `    login: ${JSON.stringify(author.login)}` : null,
+        author.affiliation ? `    affiliation: ${JSON.stringify(author.affiliation)}` : null,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join("\n"),
+    ),
+    `categories: [${values.categories.map((category) => JSON.stringify(category)).join(", ")}]`,
+    `keywords: [${values.keywords.map((keyword) => JSON.stringify(keyword)).join(", ")}]`,
+    `license: ${JSON.stringify(values.license)}`,
+    `language: ${JSON.stringify(values.language)}`,
+    `status: ${input.status}`,
+    `published_at: ${JSON.stringify(input.publishedAt)}`,
+  );
+  if (values.sourceUrl) lines.push(`source_url: ${JSON.stringify(values.sourceUrl)}`);
+  lines.push(`commit: ${JSON.stringify(input.commit)}`);
+  return `${lines.join("\n")}\n`;
 }
 
 export async function createPaperAction(formData: FormData) {
@@ -177,71 +335,23 @@ export async function createPaperAction(formData: FormData) {
     redirect(`/submit?error=${encodeURIComponent("只有作者角色可以提交论文，请联系管理员升级权限")}`);
   }
 
-  const title = formData.get("title")?.toString().trim() ?? "";
-  const abstract = formData.get("abstract")?.toString().trim() ?? "";
-  const body = formData.get("body")?.toString() ?? "";
-  const authorsRaw = formData.get("authors")?.toString() ?? "";
-  const categories = formData
-    .getAll("categories")
-    .map((value) => value.toString())
-    .filter(Boolean);
-  const keywords = formData
-    .get("keywords")
-    ?.toString()
-    .split(",")
-    .map((keyword) => keyword.trim())
-    .filter(Boolean) ?? [];
-  const license = formData.get("license")?.toString() || "CC-BY-4.0";
-  const language = formData.get("language")?.toString() || "zh-CN";
-  const sourceUrl = formData.get("sourceUrl")?.toString().trim() || undefined;
-
-  const authors = parseAuthors(authorsRaw);
-
-  if (title.length < 4) redirect(`/submit?error=${encodeURIComponent("标题至少 4 个字")}`);
-  if (body.trim().length < 200) {
-    redirect(`/submit?error=${encodeURIComponent("正文至少 200 字，请包含摘要、方法与实验")}`);
-  }
-  if (authors.length === 0) redirect(`/submit?error=${encodeURIComponent("请至少填写一位作者")}`);
-  if (categories.length === 0) redirect(`/submit?error=${encodeURIComponent("请选择至少一个分类")}`);
-  const allowedCategories = new Set(CATEGORIES.map((category) => category.slug));
-  const unknownCategories = categories.filter((category) => !allowedCategories.has(category));
-  if (unknownCategories.length) {
-    redirect(`/submit?error=${encodeURIComponent(`未知分类：${unknownCategories.join("、")}`)}`);
-  }
-  if (/<script|javascript:/i.test(body)) {
-    redirect(`/submit?error=${encodeURIComponent("正文包含不允许的脚本内容")}`);
-  }
+  const parsed = parsePaperForm(formData);
+  if (!parsed.ok) redirect(`/submit?error=${encodeURIComponent(parsed.error)}`);
+  const values = parsed.values;
 
   const paperId = newPaperId();
-  const slug = `${slugify(title)}-${paperId.slice(-4).toLowerCase()}`;
+  const slug = `${slugify(values.title)}-${paperId.slice(-4).toLowerCase()}`;
   const year = new Date().getFullYear();
   const relativeDir = `papers/${year}/${paperId}-${slug}`;
-  const contentSha = createHash("sha256").update(body).digest("hex");
-
-  const metadataYaml = [
-    `id: "${paperId}"`,
-    `title: ${JSON.stringify(title)}`,
-    "authors:",
-    ...authors.map((author) =>
-      [
-        `  - name: ${JSON.stringify(author.name)}`,
-        "login" in author && author.login ? `    login: "${author.login}"` : null,
-        "affiliation" in author && author.affiliation
-          ? `    affiliation: ${JSON.stringify(author.affiliation)}`
-          : null,
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    ),
-    `categories: [${categories.join(", ")}]`,
-    `keywords: [${keywords.join(", ")}]`,
-    `license: ${license}`,
-    `language: ${language}`,
-    "status: review",
-    `published_at: "${new Date().toISOString()}"`,
-    ...(sourceUrl ? [`source_url: ${JSON.stringify(sourceUrl)}`] : []),
-    `commit: "${contentSha}"`,
-  ].join("\n");
+  const commit = contentRevisionSha(values);
+  const contentSha = createHash("sha256").update(values.body).digest("hex");
+  const metadataYaml = buildMetadataYaml({
+    paperId,
+    values,
+    status: "review",
+    publishedAt: new Date().toISOString(),
+    commit,
+  });
 
   // Persist into the local content repository so `pnpm sync` and the validator
   // see the same artifact a GitHub PR would contain.
@@ -249,7 +359,7 @@ export async function createPaperAction(formData: FormData) {
     const dir = path.join(contentRoot(), relativeDir);
     await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, "metadata.yml"), metadataYaml, "utf8");
-    await writeFile(path.join(dir, "paper.md"), body, "utf8");
+    await writeFile(path.join(dir, "paper.md"), values.body, "utf8");
   } catch (error) {
     await recordAudit({
       actorId: user.id,
@@ -267,29 +377,26 @@ export async function createPaperAction(formData: FormData) {
       slug,
       repoId: relativeDir,
       path: `${relativeDir}/paper.md`,
-      title,
-      abstract: abstract || body.replace(/[#*`>]/g, " ").replace(/\s+/g, " ").slice(0, 600),
-      authorsJson: JSON.stringify(authors),
-      authorLogins: authors
-        .map((author) => ("login" in author ? author.login : undefined))
-        .filter(Boolean)
-        .join(","),
-      categoriesJson: JSON.stringify(categories),
-      keywordsJson: JSON.stringify(keywords),
-      license,
-      language,
-      sourceUrl: sourceUrl ?? null,
+      title: values.title,
+      abstract: values.abstract,
+      authorsJson: JSON.stringify(values.authors),
+      authorLogins: authorLogins(values.authors),
+      categoriesJson: JSON.stringify(values.categories),
+      keywordsJson: JSON.stringify(values.keywords),
+      license: values.license,
+      language: values.language,
+      sourceUrl: values.sourceUrl ?? null,
       status: PAPER_STATUS.PENDING_REVIEW,
-      currentCommitSha: contentSha,
+      currentCommitSha: commit,
       syncedAt: new Date(),
       submittedById: user.id,
       lastActivityAt: new Date(),
       versions: {
         create: {
-          commitSha: contentSha,
+          commitSha: commit,
           message: "网站提交（等待审核）",
           contentSha256: contentSha,
-          bodyMarkdown: body,
+          bodyMarkdown: values.body,
           authorLogin: user.login,
           isCurrent: true,
         },
@@ -300,22 +407,27 @@ export async function createPaperAction(formData: FormData) {
   let prNote = "本地草稿";
   if (contentRepoConfigured()) {
     try {
-      const pr = await createPaperPullRequest({
-        branch: `paper/${paperId}`,
-        title: `[Paper] ${title}`,
-        body: `由 RuArXiv 网站提交。\n\npaperId: \`${paperId}\`\n作者: ${authors
+      const submission = await submitPaperFiles({
+        title: values.title,
+        body: `由 RuArXiv 网站提交。\n\npaperId: \`${paperId}\`\n作者: ${values.authors
           .map((author) => author.name)
           .join(", ")}\n\n> 合并后由 Webhook 触发同步并进入审核队列。`,
         files: [
           { path: `${relativeDir}/metadata.yml`, content: metadataYaml },
-          { path: `${relativeDir}/paper.md`, content: body },
+          { path: `${relativeDir}/paper.md`, content: values.body },
         ],
       });
-      await prisma.paper.update({
-        where: { id: paperId },
-        data: { path: `${relativeDir}/paper.md` },
+      prNote = `PR #${submission.number}（${submission.branch}，${
+        submission.merge === "merged"
+          ? "已自动合并"
+          : submission.merge === "auto"
+            ? "已开启自动合并"
+            : "等待手动合并"
+      }）`;
+      await prisma.paperVersion.update({
+        where: { paperId_commitSha: { paperId, commitSha: commit } },
+        data: { prNumber: submission.number },
       });
-      prNote = `PR #${pr.number}`;
     } catch (error) {
       prNote = `PR 创建失败：${error instanceof Error ? error.message : "unknown"}`;
     }
@@ -327,12 +439,147 @@ export async function createPaperAction(formData: FormData) {
     action: "paper.submitted",
     targetType: "paper",
     targetId: paperId,
-    detail: { title, categories, authors: authors.map((a) => a.name), prNote },
+    detail: { title: values.title, categories: values.categories, authors: values.authors.map((a) => a.name), prNote },
   });
 
   revalidatePath("/admin");
   revalidatePath("/");
   redirect(`/papers/${paperId}?submitted=1`);
+}
+
+/**
+ * Edit an existing paper. The author of the paper and moderators may revise it;
+ * every revision creates a new `PaperVersion` and (when GitHub is configured) a
+ * fresh pull request. Synchronisation never overwrites the site-owned review
+ * status, so editing a rejected paper moves it back into the review queue.
+ */
+export async function updatePaperAction(formData: FormData) {
+  const paperId = formData.get("paperId")?.toString() ?? "";
+  const user = await getCurrentUser();
+  if (!user) redirect(`/login?next=${encodeURIComponent(`/papers/${paperId}/edit`)}`);
+
+  const paper = await prisma.paper.findUnique({ where: { id: paperId } });
+  if (!paper) redirect(`/?error=${encodeURIComponent("论文不存在或已被删除")}`);
+
+  const isModerator = hasRole(user.role, "MODERATOR");
+  const isOwner = paper.submittedById === user.id;
+  if (!isOwner && !isModerator) {
+    redirect(`/papers/${paperId}?error=${encodeURIComponent("你没有修改这篇论文的权限")}`);
+  }
+
+  const parsed = parsePaperForm(formData);
+  if (!parsed.ok) {
+    redirect(`/papers/${paperId}/edit?error=${encodeURIComponent(parsed.error)}`);
+  }
+  const values = parsed.values;
+  const commit = contentRevisionSha(values);
+
+  const nextStatus = isModerator
+    ? paper.status
+    : paper.status === PAPER_STATUS.REJECTED || paper.status === PAPER_STATUS.HIDDEN
+      ? PAPER_STATUS.PENDING_REVIEW
+      : paper.status;
+  const metadataStatus: "review" | "published" | "hidden" =
+    nextStatus === PAPER_STATUS.PUBLISHED
+      ? "published"
+      : nextStatus === PAPER_STATUS.HIDDEN
+        ? "hidden"
+        : "review";
+  const now = new Date();
+  const publishedAt = (paper.publishedAt ?? now).toISOString();
+  const metadataYaml = buildMetadataYaml({
+    paperId,
+    values,
+    status: metadataStatus,
+    publishedAt,
+    commit,
+  });
+  const contentPath = paper.repoId || paper.path.replace(/\/paper\.md$/, "");
+
+  const version = await prisma.$transaction(async (tx) => {
+    const saved = await tx.paperVersion.upsert({
+      where: { paperId_commitSha: { paperId, commitSha: commit } },
+      create: {
+        paperId,
+        commitSha: commit,
+        parentSha: paper.currentCommitSha,
+        message: isModerator ? "管理员修订" : "作者修订",
+        contentSha256: createHash("sha256").update(values.body).digest("hex"),
+        bodyMarkdown: values.body,
+        authorLogin: user.login,
+        isCurrent: true,
+      },
+      update: { bodyMarkdown: values.body, isCurrent: true },
+    });
+
+    await tx.paperVersion.updateMany({
+      where: { paperId, isCurrent: true, NOT: { id: saved.id } },
+      data: { isCurrent: false },
+    });
+
+    await tx.paper.update({
+      where: { id: paperId },
+      data: {
+        title: values.title,
+        abstract: values.abstract,
+        authorsJson: JSON.stringify(values.authors),
+        authorLogins: authorLogins(values.authors),
+        categoriesJson: JSON.stringify(values.categories),
+        keywordsJson: JSON.stringify(values.keywords),
+        license: values.license,
+        language: values.language,
+        sourceUrl: values.sourceUrl ?? null,
+        status: nextStatus,
+        currentCommitSha: commit,
+        currentVersionId: saved.id,
+        syncedAt: now,
+        lastActivityAt: now,
+        publishedAt:
+          nextStatus === PAPER_STATUS.PUBLISHED ? (paper.publishedAt ?? now) : paper.publishedAt,
+      },
+    });
+
+    return saved;
+  });
+
+  let prNote = contentRepoConfigured() ? "未创建 PR" : "未配置 GitHub 内容仓库";
+  if (contentRepoConfigured()) {
+    try {
+      const submission = await submitPaperFiles({
+        title: `修订：${values.title}`,
+        body: `由 RuArXiv 网站提交论文修订。\n\npaperId: \`${paperId}\`\ncommit: \`${commit}\`\n\n> 合并后由 Webhook 同步；站内审核状态不会被同步覆盖。`,
+        files: [
+          { path: `${contentPath}/metadata.yml`, content: metadataYaml },
+          { path: `${contentPath}/paper.md`, content: values.body },
+        ],
+      });
+      await prisma.paperVersion.update({
+        where: { id: version.id },
+        data: { prNumber: submission.number },
+      });
+      prNote = `PR #${submission.number}（${submission.branch}，${
+        submission.merge === "merged"
+          ? "已自动合并"
+          : submission.merge === "auto"
+            ? "已开启自动合并"
+            : "等待手动合并"
+      }）`;
+    } catch (error) {
+      prNote = `PR 创建失败：${error instanceof Error ? error.message : "unknown"}`;
+    }
+  }
+
+  await recordAudit({
+    actorId: user.id,
+    actorLogin: user.login,
+    action: "paper.updated",
+    targetType: "paper",
+    targetId: paperId,
+    detail: { title: values.title, sha: commit, status: nextStatus, prNote },
+  });
+
+  revalidatePaper(paperId);
+  redirect(`/papers/${paperId}?updated=1`);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -428,17 +675,31 @@ export async function resolveReportAction(formData: FormData) {
 export async function syncNowAction() {
   const user = await getCurrentUser();
   if (!user || !hasRole(user.role, "MODERATOR")) redirect("/login?error=forbidden");
+  const { syncFromGitHub } = await import("@/lib/sync");
   const { syncLocalRepository } = await import("@/lib/ingest");
-  const report = await syncLocalRepository({ actorLogin: user.login });
+
+  let source: "github" | "local" = "local";
+  let report: { created: number; updated: number; failed: Array<{ path: string; error: string }> };
+  if (contentRepoConfigured()) {
+    try {
+      report = await syncFromGitHub({ actorLogin: user.login });
+      source = "github";
+    } catch {
+      report = await syncLocalRepository({ actorLogin: user.login });
+    }
+  } else {
+    report = await syncLocalRepository({ actorLogin: user.login });
+  }
+
   await recordAudit({
     actorId: user.id,
     actorLogin: user.login,
-    action: "sync.local",
+    action: `sync.${source}`,
     targetType: "sync",
     targetId: null,
     detail: report,
   });
   revalidatePath("/");
   revalidatePath("/admin");
-  redirect(`/admin?synced=${report.created + report.updated}`);
+  redirect(`/admin?synced=${report.created + report.updated}&source=${source}`);
 }

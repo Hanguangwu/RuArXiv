@@ -16,7 +16,11 @@ const SYNC_STATUS_LABELS: Record<string, string> = {
   DUPLICATE: "重复投递",
 };
 
-function Notice({ params }: { params: { ok?: string; synced?: string; error?: string } }) {
+function Notice({
+  params,
+}: {
+  params: { ok?: string; synced?: string; source?: string; error?: string };
+}) {
   if (params.error) {
     const messages: Record<string, string> = {
       forbidden: "当前账号没有管理权限。",
@@ -26,7 +30,12 @@ function Notice({ params }: { params: { ok?: string; synced?: string; error?: st
     return <p className="banner banner-error">{messages[params.error] ?? `操作失败：${params.error}`}</p>;
   }
   if (params.synced !== undefined) {
-    return <p className="banner banner-ok">本地内容同步完成，新增或更新 {params.synced} 篇论文。</p>;
+    const origin = params.source === "github" ? "GitHub 内容仓库" : "本地内容目录";
+    return (
+      <p className="banner banner-ok">
+        已从{origin}同步，新增或更新 {params.synced} 篇论文。
+      </p>
+    );
   }
   if (params.ok) {
     return <p className="banner banner-ok">操作已记录，页面数据已刷新。</p>;
@@ -37,7 +46,7 @@ function Notice({ params }: { params: { ok?: string; synced?: string; error?: st
 export default async function AdminPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ok?: string; synced?: string; error?: string }>;
+  searchParams: Promise<{ ok?: string; synced?: string; source?: string; error?: string }>;
 }) {
   const user = await requireUser("MODERATOR");
   const params = await searchParams;

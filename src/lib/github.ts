@@ -212,45 +212,110 @@ export async function createIssueComment(issueNumber: number, body: string) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Paper submission (branch + pull request)                                    */
+/* Paper submission (shared branch + pull request)                             */
 /* -------------------------------------------------------------------------- */
 
 export type PaperFile = { path: string; content: string };
 
-/**
- * Create one commit on a new branch and open a pull request. The site never
- * writes to the default branch directly; GitHub Actions validates the PR.
- */
-export async function createPaperPullRequest(input: {
+export type PaperSubmissionResult = {
+  number: number;
+  url: string;
   branch: string;
+  /** `auto`: auto-merge queued, `merged`: merged now, `pending`: needs a human. */
+  merge: "auto" | "merged" | "pending";
+};
+
+function isGitHubStatus(error: unknown, ...statuses: number[]): boolean {
+  if (!error || typeof error !== "object" || !("status" in error)) return false;
+  return statuses.includes((error as { status?: number }).status ?? 0);
+}
+
+async function githubGraphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+  const token = await installationToken();
+  const response = await fetch("https://api.github.com/graphql", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+      "X-GitHub-Api-Version": API_VERSION,
+    },
+    body: JSON.stringify({ query, variables }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const payload = (await response.json()) as {
+    data?: T;
+    errors?: Array<{ message?: string }>;
+  };
+  if (!response.ok || payload.errors?.length) {
+    throw new Error(payload.errors?.[0]?.message ?? `GitHub GraphQL ${response.status}`);
+  }
+  return payload.data as T;
+}
+
+async function branchHead(
+  client: Octokit,
+  repo: { owner: string; repo: string },
+  branch: string,
+): Promise<{ sha: string; treeSha: string } | null> {
+  try {
+    const { data: ref } = await client.rest.git.getRef({
+      owner: repo.owner,
+      repo: repo.repo,
+      ref: `heads/${branch}`,
+    });
+    const { data: commit } = await client.rest.git.getCommit({
+      owner: repo.owner,
+      repo: repo.repo,
+      commit_sha: ref.object.sha,
+    });
+    return { sha: ref.object.sha, treeSha: commit.tree.sha };
+  } catch (error) {
+    if (isGitHubStatus(error, 404)) return null;
+    throw error;
+  }
+}
+
+async function enableAutoMerge(nodeId: string): Promise<void> {
+  await githubGraphql(
+    `mutation EnableAutoMerge($id: ID!) {
+      enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: MERGE }) {
+        pullRequest { number }
+      }
+    }`,
+    { id: nodeId },
+  );
+}
+
+/**
+ * Commit paper files to one shared submissions branch and keep a single pull
+ * request from that branch into the default branch.
+ *
+ * Per-paper branches grew without bound. A shared branch keeps the branch count
+ * at one and lets `main` stay protected: the app pushes to `submissions`, the
+ * PR is auto-merged (or merged immediately when allowed), and required checks
+ * still gate the merge.
+ */
+export async function submitPaperFiles(input: {
   files: PaperFile[];
   title: string;
   body: string;
   baseBranch?: string;
-}): Promise<{ number: number; url: string }> {
+}): Promise<PaperSubmissionResult> {
   const repo = parseRepo();
   if (!repo || !contentRepoConfigured()) {
     throw new Error("内容仓库未配置，无法创建 PR");
   }
   const client = await octokit();
   const base = input.baseBranch || process.env.GITHUB_CONTENT_BRANCH || "main";
+  const branch = process.env.GITHUB_SUBMISSIONS_BRANCH || "submissions";
+  if (branch === base) {
+    throw new Error("GITHUB_SUBMISSIONS_BRANCH 不能与 GITHUB_CONTENT_BRANCH 相同");
+  }
 
-  const { data: baseRef } = await client.rest.git.getRef({
-    owner: repo.owner,
-    repo: repo.repo,
-    ref: `heads/${base}`,
-  });
-  const baseSha = baseRef.object.sha;
-
-  const { data: baseCommit } = await client.rest.git.getCommit({
-    owner: repo.owner,
-    repo: repo.repo,
-    commit_sha: baseSha,
-  });
-
-  const tree = await Promise.all(
+  const blobs = await Promise.all(
     input.files.map(async (file) => {
-      const { data: blob } = await client.rest.git.createBlob({
+      const { data } = await client.rest.git.createBlob({
         owner: repo.owner,
         repo: repo.repo,
         content: Buffer.from(file.content).toString("base64"),
@@ -260,43 +325,172 @@ export async function createPaperPullRequest(input: {
         path: file.path,
         mode: "100644" as const,
         type: "blob" as const,
-        sha: blob.sha,
+        sha: data.sha,
       };
     }),
   );
 
-  const { data: newTree } = await client.rest.git.createTree({
-    owner: repo.owner,
-    repo: repo.repo,
-    base_tree: baseCommit.tree.sha,
-    tree,
-  });
+  let head = await branchHead(client, repo, branch);
+  if (!head) {
+    const { data: baseRef } = await client.rest.git.getRef({
+      owner: repo.owner,
+      repo: repo.repo,
+      ref: `heads/${base}`,
+    });
+    try {
+      await client.rest.git.createRef({
+        owner: repo.owner,
+        repo: repo.repo,
+        ref: `refs/heads/${branch}`,
+        sha: baseRef.object.sha,
+      });
+    } catch (error) {
+      // Another submission created the branch first; that is fine.
+      if (!isGitHubStatus(error, 422, 409)) throw error;
+    }
+    head = await branchHead(client, repo, branch);
+    if (!head) throw new Error(`无法创建投稿分支 ${branch}`);
+  } else {
+    // When every commit on the submissions branch is already in the base
+    // branch, fast-forward it so the next batch starts from a clean base. This
+    // keeps "require branches to be up to date" branch protection workable and
+    // avoids the shared branch drifting behind.
+    try {
+      const { data: comparison } = await client.rest.repos.compareCommits({
+        owner: repo.owner,
+        repo: repo.repo,
+        base: branch,
+        head: base,
+      });
+      if (comparison.behind_by === 0) {
+        const { data: baseRef } = await client.rest.git.getRef({
+          owner: repo.owner,
+          repo: repo.repo,
+          ref: `heads/${base}`,
+        });
+        if (baseRef.object.sha !== head.sha) {
+          await client.rest.git.updateRef({
+            owner: repo.owner,
+            repo: repo.repo,
+            ref: `heads/${branch}`,
+            sha: baseRef.object.sha,
+            force: false,
+          });
+        }
+      }
+    } catch {
+      // Non-fatal: the commit below still lands on the current head.
+    }
+  }
 
-  const { data: commit } = await client.rest.git.createCommit({
-    owner: repo.owner,
-    repo: repo.repo,
-    message: `paper: ${input.title}`,
-    tree: newTree.sha,
-    parents: [baseSha],
-  });
+  let commitSha: string | null = null;
+  for (let attempt = 0; attempt < 5 && !commitSha; attempt += 1) {
+    const parent = await branchHead(client, repo, branch);
+    if (!parent) throw new Error(`投稿分支 ${branch} 不存在`);
 
-  await client.rest.git.createRef({
-    owner: repo.owner,
-    repo: repo.repo,
-    ref: `refs/heads/${input.branch}`,
-    sha: commit.sha,
-  });
+    const { data: tree } = await client.rest.git.createTree({
+      owner: repo.owner,
+      repo: repo.repo,
+      base_tree: parent.treeSha,
+      tree: blobs,
+    });
 
-  const { data: pr } = await client.rest.pulls.create({
+    const { data: commit } = await client.rest.git.createCommit({
+      owner: repo.owner,
+      repo: repo.repo,
+      message: `paper: ${input.title}`,
+      tree: tree.sha,
+      parents: [parent.sha],
+    });
+
+    try {
+      await client.rest.git.updateRef({
+        owner: repo.owner,
+        repo: repo.repo,
+        ref: `heads/${branch}`,
+        sha: commit.sha,
+        force: false,
+      });
+      commitSha = commit.sha;
+    } catch (error) {
+      // A concurrent submission moved the branch; rebuild on the new head.
+      if (!isGitHubStatus(error, 422, 409) || attempt === 4) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+    }
+  }
+  if (!commitSha) throw new Error("投稿分支更新冲突，请重试");
+
+  const { data: openPullRequests } = await client.rest.pulls.list({
     owner: repo.owner,
     repo: repo.repo,
-    title: input.title,
-    head: input.branch,
+    state: "open",
+    head: `${repo.owner}:${branch}`,
     base,
-    body: input.body,
+    per_page: 10,
   });
 
-  return { number: pr.number, url: pr.html_url };
+  const existing = openPullRequests[0];
+  let pullNumber: number;
+  let pullUrl: string;
+  let pullNodeId: string;
+  let autoMergeActive = false;
+
+  if (existing) {
+    const { data: updated } = await client.rest.pulls.update({
+      owner: repo.owner,
+      repo: repo.repo,
+      pull_number: existing.number,
+      title: "[Submissions] 论文投稿队列",
+      body: input.body,
+    });
+    pullNumber = updated.number;
+    pullUrl = updated.html_url;
+    pullNodeId = updated.node_id;
+    autoMergeActive = Boolean(updated.auto_merge);
+  } else {
+    const { data: created } = await client.rest.pulls.create({
+      owner: repo.owner,
+      repo: repo.repo,
+      title: "[Submissions] 论文投稿队列",
+      head: branch,
+      base,
+      body: input.body,
+    });
+    pullNumber = created.number;
+    pullUrl = created.html_url;
+    pullNodeId = created.node_id;
+    autoMergeActive = Boolean(created.auto_merge);
+  }
+
+  let merge: PaperSubmissionResult["merge"] = "pending";
+  if (autoMergeActive) {
+    // The batch PR already has auto-merge enabled; new commits join the queue.
+    merge = "auto";
+  } else {
+    try {
+      await enableAutoMerge(pullNodeId);
+      merge = "auto";
+    } catch {
+      try {
+        await client.rest.pulls.merge({
+          owner: repo.owner,
+          repo: repo.repo,
+          pull_number: pullNumber,
+          merge_method: "merge",
+        });
+        merge = "merged";
+      } catch {
+        merge = "pending";
+      }
+    }
+  }
+
+  return {
+    number: pullNumber,
+    url: pullUrl,
+    branch,
+    merge,
+  };
 }
 
 /* -------------------------------------------------------------------------- */

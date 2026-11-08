@@ -1,7 +1,7 @@
 /**
  * Content / discussion sync CLI.
  *
- *   pnpm sync            # mirror local content/papers into the database
+ *   pnpm sync            # mirror local papers/ into the database
  *   pnpm sync --github   # pull the configured GitHub content repository
  */
 import { loadLocalPapers } from "../src/lib/content";

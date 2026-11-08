@@ -4,7 +4,7 @@
 
 论文正文是内容仓库里的 Markdown，元数据是可校验的 YAML，讨论是 GitHub Issue / Issue Comment。
 网站不把 GitHub 当在线数据库，而是维护自己的只读索引与业务数据（用户、投票、举报、审核、审计）。
-仓库中的 `content/papers` 是内容仓库的本地镜像；没有 GitHub 凭据时，可通过 `ALLOW_DEMO_LOGIN=true` 使用本地演示登录体验界面。
+仓库根目录的 `papers/` 就是内容仓库（与 GitHub PR 写入的路径一致）；没有 GitHub 凭据时，可通过 `ALLOW_DEMO_LOGIN=true` 使用本地演示登录体验界面。
 
 > **部署目标：完全运行在 Vercel 上。**
 > 关系库用 Neon Postgres、缓存/限流用 Upstash Redis（均通过 Vercel Marketplace 接入），
@@ -107,9 +107,9 @@ pnpm dev         # http://localhost:3000
 | `pnpm dev` | 开发服务器 |
 | `pnpm build` / `pnpm start` | 生产构建（含 `prisma migrate deploy`）与启动 |
 | `pnpm typecheck` | TypeScript 检查 |
-| `pnpm validate` | 校验 `content/papers` 的目录、Schema、安全规则 |
+| `pnpm validate` | 校验 `papers/` 的目录、Schema、安全规则 |
 | `pnpm check` | typecheck + validate |
-| `pnpm sync` | 把本地 `content/papers` 同步进数据库（仅开发） |
+| `pnpm sync` | 把本地 `papers/` 同步进数据库（仅开发） |
 | `pnpm sync --github` | 从配置的 GitHub 仓库拉取并同步 |
 | `pnpm db:generate` | 生成 Prisma Client |
 | `pnpm db:migrate` | 创建/应用开发分支迁移（`prisma migrate dev`） |
@@ -158,6 +158,7 @@ GITHUB_INSTALLATION_ID=...
 GITHUB_WEBHOOK_SECRET=...
 GITHUB_CONTENT_REPO=owner/papers
 GITHUB_CONTENT_BRANCH=main
+GITHUB_SUBMISSIONS_BRANCH=submissions
 GITHUB_REDIRECT_URI=https://your.site/api/v1/auth/github/callback
 
 UPSTASH_REDIS_REST_URL=...
@@ -220,7 +221,7 @@ export const maxDuration = 300;
 ## 目录结构
 
 ```text
-content/papers/<year>/<paperId>-<slug>/
+papers/<year>/<paperId>-<slug>/
   metadata.yml         # 机器可读元数据（zod 校验）
   paper.md             # 正文（Markdown + LaTeX）
   discussion.json      # Issue 评论快照
@@ -253,16 +254,36 @@ src/workflows/**       # Vercel Workflows（全量回填、对账）
 
 ## 核心流程
 
-### 论文提交（PR 优先，但数据库先行）
+### 论文提交（统一投稿分支 + 自动合并）
 
 1. 作者在 `/submit` 填写元数据与 Markdown 正文。
-2. 服务端校验后，在 Postgres 事务中创建 `Paper`（`PENDING_REVIEW`）、`PaperVersion`、审计与 `GitHubWriteJob`。
-3. 立即返回详情页；后台消费者创建分支与 PR，保存 `prNumber` / `prUrl`。
-4. GitHub Actions 执行 `pnpm validate`（Schema、目录命名、脚本注入、大小限制）。
+2. 服务端校验后，在 Postgres 中创建 `Paper`（`PENDING_REVIEW`）、`PaperVersion` 与审计记录。
+3. 网站把文件提交到**统一投稿分支**（`GITHUB_SUBMISSIONS_BRANCH`，默认 `submissions`），并维护一个 `submissions → main` 的 PR；该 PR 会自动合并（`auto-merge`），分支数始终为 1。
+4. GitHub Actions 执行 `pnpm validate`（Schema、目录命名、脚本注入、大小限制）；开启分支保护后，检查通过才会合并。
 5. 合并后 `push` Webhook 触发同步，写入新版本；论文仍保持待审核，直到管理员在站内批准。
 6. 批准后公开，按 tag 失效缓存；每次合并保留 commit SHA、PR、父提交与内容哈希。
 
-> 关键变化：**运行时不再写 `content/papers`**。Vercel 文件系统只读，提交内容存数据库，GitHub PR 异步创建。
+> 关键变化：**运行时不再写内容目录**。Vercel 文件系统只读，提交内容存数据库，GitHub PR 异步创建。
+
+#### 保护 `main` 并保持只有一个投稿分支
+
+1. 仓库 **Settings → General → Pull Requests** 勾选 **Allow auto-merge**。
+2. 为 `main` 添加 Ruleset / Branch protection：
+   - 禁止直接 push 到 `main`；
+   - 要求 PR 合并（可将 `RuArXiv Content Bot` 加入 bypass，或只要求状态检查）；
+   - 要求状态检查：`validate-papers`。只有会在论文 PR 上运行的工作流才能作为必需检查；`validate-db` 只在 `prisma/**` 等路径变化时触发，配成必需检查会永远等待。
+3. 站点只需 `Contents: write` + `Pull requests: write` 就能向 `submissions` 推送；`main` 始终由 PR 合并进入。`submissions` 本身不要加保护规则。
+4. 如果启用了 “Require approvals”，请在 ruleset 的 bypass 列表中加入该 GitHub App；机器人无法批准自己的 PR，否则 PR 会停在等待审批。
+5. 不建议启用 “Require branches to be up to date” 或 “Require linear history”：共享分支在批次合并后会快进到 `main`；如必须启用，请改用 merge queue。
+
+> 迁移后旧的一次性 `paper/<paperId>` 分支不会再新增。确认对应 PR 已合并或关闭后，可以手动删除这些历史分支；不要删除尚未合并的分支，否则会丢失内容。
+
+### 论文修订
+
+1. 作者在详情页点「修改论文」，或管理员在任意论文上修订。
+2. 保存时写入新的 `PaperVersion`（`isCurrent` 切换）与审计日志，并把修订提交到同一个投稿分支和 PR。
+3. 审核状态由站点拥有：同步不会因为内容仓库里的 `status: review` 把已发布论文降回待审核。
+4. 被驳回/隐藏的论文由作者修订后重新进入审核队列。
 
 ### 讨论（Issue 映射）
 
@@ -274,6 +295,7 @@ src/workflows/**       # Vercel Workflows（全量回填、对账）
 ### 同步与一致性
 
 - Webhook 先验签（`X-Hub-Signature-256`），再用 `SyncEvent.deliveryId` 唯一约束去重。
+- `push` 只处理内容分支（默认 `main`）；投稿分支 `submissions` 的 push 只记录事件，不触发全量同步。
 - 验签通过后只写事件并入队，立即返回 202；不在请求中扫描仓库。
 - `push` 走增量 compare + 分批；首次全量/历史重建用 Vercel Workflow。
 - `issue_comment` 用 `since` 游标增量拉取，避免全量覆盖。

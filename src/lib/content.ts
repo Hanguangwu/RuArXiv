@@ -6,12 +6,14 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { PAPER_STATUS, type PaperStatus } from "./constants";
 import type { PaperAuthor } from "./serialize";
+import { deriveAbstract } from "./abstract";
+import { GITHUB_LOGIN_RE, repairAuthorMetadata } from "./authors";
 
 /**
  * The content repository contract.
  *
  * Every paper lives in an immutable directory:
- *   content/papers/<year>/<paperId>-<paperSlug>/
+ *   papers/<year>/<paperId>-<paperSlug>/
  *     paper.md          body, optionally with frontmatter
  *     metadata.yml      machine readable metadata (optional)
  *     discussion.json   exported GitHub issue + comments (optional)
@@ -23,10 +25,7 @@ import type { PaperAuthor } from "./serialize";
 
 export const authorSchema = z.object({
   name: z.string().min(1).max(160),
-  login: z
-    .string()
-    .regex(/^[a-zA-Z0-9-]{1,39}$/)
-    .optional(),
+  login: z.string().regex(GITHUB_LOGIN_RE).optional(),
   orcid: z.string().max(32).optional(),
   affiliation: z.string().max(200).optional(),
 });
@@ -104,10 +103,15 @@ export function sha256(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
+/**
+ * The content repository is this checkout: papers live under `papers/` at the
+ * repository root (the same path the GitHub PR writes to). `CONTENT_ROOT` can
+ * point at a different checkout, but it must still contain `papers/`.
+ */
 export function contentRoot(): string {
   return process.env.CONTENT_ROOT
     ? path.resolve(process.env.CONTENT_ROOT)
-    : path.join(process.cwd(), "content");
+    : process.cwd();
 }
 
 export function slugify(input: string): string {
@@ -129,16 +133,15 @@ function parseDate(value: string | undefined, fallback: Date): Date {
   return Number.isNaN(date.getTime()) ? fallback : date;
 }
 
-function deriveAbstract(metadata: PaperMetadata, body: string): string {
-  if (metadata.abstract?.trim()) return metadata.abstract.trim();
-  const headingMatch = body.match(/##\s*(摘要|Abstract)\s*\n+([\s\S]*?)(\n##\s|$)/i);
-  const candidate = headingMatch ? headingMatch[2] : body;
-  return candidate
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/[#>*_`[\]()!-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 600);
+/**
+ * Normalize legacy or hand-written metadata before validation. A `login` that
+ * is not a valid GitHub handle (for example an affiliation typed into the
+ * second column) is moved to `affiliation` instead of rejecting the paper.
+ */
+function normalizeMetadataAuthors(source: Record<string, unknown>): Record<string, unknown> {
+  const authors = source.authors;
+  if (!Array.isArray(authors)) return source;
+  return { ...source, authors: authors.map(repairAuthorMetadata) };
 }
 
 /**
@@ -158,7 +161,7 @@ export function parsePaperDirectory(dir: string, relativePath: string): PaperRec
     ? (parseYaml(readFileSync(metadataPath, "utf8")) as Record<string, unknown>)
     : frontmatter;
 
-  const parsed = paperMetadataSchema.safeParse(metadataSource);
+  const parsed = paperMetadataSchema.safeParse(normalizeMetadataAuthors(metadataSource));
   if (!parsed.success) {
     const detail = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "metadata"}: ${issue.message}`)
@@ -214,7 +217,7 @@ export function parsePaperDirectory(dir: string, relativePath: string): PaperRec
     path: `${relativePath}/paper.md`,
     metadata,
     body,
-    abstract: deriveAbstract(metadata, body),
+    abstract: deriveAbstract(metadata.abstract, body),
     sha,
     contentSha256,
     versions,
@@ -227,7 +230,7 @@ export function parsePaperDirectory(dir: string, relativePath: string): PaperRec
   };
 }
 
-/** Walk `content/papers/<year>/<paperId>-<slug>` directories. */
+/** Walk `papers/<year>/<paperId>-<slug>` directories. */
 export function scanPaperDirectories(root = contentRoot()): Array<{
   dir: string;
   relativePath: string;
@@ -265,7 +268,7 @@ export function parsePaperFiles(input: {
   const metadataRaw = input.metadataYaml
     ? (parseYaml(input.metadataYaml) as Record<string, unknown>)
     : frontmatter;
-  const parsed = paperMetadataSchema.safeParse(metadataRaw);
+  const parsed = paperMetadataSchema.safeParse(normalizeMetadataAuthors(metadataRaw));
   if (!parsed.success) {
     throw new Error(
       `${input.relativePath}: 元数据不合法 (${parsed.error.issues
@@ -305,7 +308,7 @@ export function parsePaperFiles(input: {
     path: `${input.relativePath}/paper.md`,
     metadata,
     body,
-    abstract: deriveAbstract(metadata, body),
+    abstract: deriveAbstract(metadata.abstract, body),
     sha: metadata.commit ?? sha256(`${JSON.stringify(metadata)}\n${body}`),
     contentSha256: sha256(`${JSON.stringify(metadata)}\n${body}`),
     versions,

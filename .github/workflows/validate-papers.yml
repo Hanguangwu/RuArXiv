@@ -3,14 +3,16 @@ name: validate-papers
 on:
   pull_request:
     paths:
-      - "content/papers/**"
+      - "papers/**"
       - "schemas/**"
       - "scripts/validate-content.ts"
       - "src/lib/content.ts"
+      - "src/lib/abstract.ts"
+      - "src/lib/authors.ts"
   push:
     branches: ["main"]
     paths:
-      - "content/papers/**"
+      - "papers/**"
 
 jobs:
   validate:

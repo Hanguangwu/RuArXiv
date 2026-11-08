@@ -6,7 +6,7 @@
  * validate-papers.yml` on every pull request and locally via `pnpm validate`.
  */
 import { CATEGORIES } from "../src/lib/constants";
-import { loadLocalPapers, scanPaperDirectories } from "../src/lib/content";
+import { parsePaperDirectory, scanPaperDirectories } from "../src/lib/content";
 
 function main() {
   const dirs = scanPaperDirectories();
@@ -18,17 +18,14 @@ function main() {
 
   for (const { dir, relativePath } of dirs) {
     try {
-      const record = loadLocalPapers().find((p) => p.repoId === relativePath);
-      if (!record) {
-        // loadLocalPapers parses the whole tree; fall back to per-directory parse
-        // for isolated error reporting below.
-        continue;
-      }
+      const record = parsePaperDirectory(dir, relativePath);
       papers += 1;
+
       if (ids.has(record.paperId)) {
         errors.push(`${relativePath}: 重复的 paperId，与 ${ids.get(record.paperId)} 冲突`);
       }
       ids.set(record.paperId, relativePath);
+
       if (slugs.has(record.slug)) {
         errors.push(`${relativePath}: 重复的 slug，与 ${slugs.get(record.slug)} 冲突`);
       }

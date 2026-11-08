@@ -1,3 +1,5 @@
+import { GITHUB_LOGIN_RE, repairAuthorMetadata } from "./authors";
+
 export type PaperAuthor = {
   name: string;
   login?: string;
@@ -31,15 +33,15 @@ export function parseReactions(raw: string | null | undefined): Record<string, n
 }
 
 export function parseAuthors(raw: string | null | undefined): PaperAuthor[] {
-  return parseJsonArray<PaperAuthor>(raw).filter(
-    (author) => author && typeof author.name === "string",
-  );
+  return parseJsonArray<Record<string, unknown>>(raw)
+    .map((author) => repairAuthorMetadata(author) as PaperAuthor)
+    .filter((author) => author && typeof author.name === "string" && author.name.length > 0);
 }
 
 export function authorLogins(authors: PaperAuthor[]): string {
   return authors
     .map((author) => author.login?.trim().toLowerCase())
-    .filter((login): login is string => !!login)
+    .filter((login): login is string => !!login && GITHUB_LOGIN_RE.test(login))
     .join(",");
 }
 
