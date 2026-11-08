@@ -1,6 +1,7 @@
 name: validate-papers
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "papers/**"
@@ -9,6 +10,9 @@ on:
       - "src/lib/content.ts"
       - "src/lib/abstract.ts"
       - "src/lib/authors.ts"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "pnpm-lock.yaml"
   push:
     branches: ["main"]
     paths:
@@ -27,6 +31,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Generate Prisma Client
+        run: pnpm db:generate
       - name: Validate paper metadata and directory layout
         run: pnpm validate
       - name: Typecheck

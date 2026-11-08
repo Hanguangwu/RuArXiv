@@ -267,14 +267,15 @@ src/workflows/**       # Vercel Workflows（全量回填、对账）
 
 #### 保护 `main` 并保持只有一个投稿分支
 
-1. 仓库 **Settings → General → Pull Requests** 勾选 **Allow auto-merge**。
+1. 仓库 **Settings → General → Pull Requests** 勾选 **Allow auto-merge**，并允许 **Merge commit**。
 2. 为 `main` 添加 Ruleset / Branch protection：
-   - 禁止直接 push 到 `main`；
-   - 要求 PR 合并（可将 `RuArXiv Content Bot` 加入 bypass，或只要求状态检查）；
-   - 要求状态检查：`validate-papers`。只有会在论文 PR 上运行的工作流才能作为必需检查；`validate-db` 只在 `prisma/**` 等路径变化时触发，配成必需检查会永远等待。
-3. 站点只需 `Contents: write` + `Pull requests: write` 就能向 `submissions` 推送；`main` 始终由 PR 合并进入。`submissions` 本身不要加保护规则。
-4. 如果启用了 “Require approvals”，请在 ruleset 的 bypass 列表中加入该 GitHub App；机器人无法批准自己的 PR，否则 PR 会停在等待审批。
-5. 不建议启用 “Require branches to be up to date” 或 “Require linear history”：共享分支在批次合并后会快进到 `main`；如必须启用，请改用 merge queue。
+   - 禁止直接 push / 删除 / 强制推送；
+   - 要求通过 PR 合并；
+   - **Required status checks 只选 `validate`**。`validate` 是 `validate-papers.yml` 里 job 的名字；`validate-papers` 是 workflow 名，不是 check 名，填成 `validate-papers` 会永远等待。`validate-db` 只在 `prisma/**` 等路径变化时触发，也不能作为论文 PR 的必需检查。
+   - **Required approvals 设为 0**。GitHub App 不能批准自己的 PR，开了审批就必须人工逐批批准。
+3. **不要把 `RuArXiv Content Bot` 加进 bypass list**（尤其不要选 “Always allow”）：bypass 会允许它的自动合并绕过 required checks，等于关掉 CI 门禁。站点只向 `submissions` 推送，`main` 只通过正常 PR 合并进入，不需要 bypass。
+4. 站点只需 `Contents: write` + `Pull requests: write`；`submissions` 本身不要加保护规则。
+5. 关闭 **Require linear history**：它会拒绝 merge commit，共享分支的自动合并会一直失败。也不建议启用 “Require branches to be up to date”：共享分支在批次合并后会快进到 `main`；如必须启用，请改用 merge queue。
 
 > 迁移后旧的一次性 `paper/<paperId>` 分支不会再新增。确认对应 PR 已合并或关闭后，可以手动删除这些历史分支；不要删除尚未合并的分支，否则会丢失内容。
 
